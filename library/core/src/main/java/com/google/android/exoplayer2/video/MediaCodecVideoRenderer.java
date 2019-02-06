@@ -504,7 +504,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     // AMZN_CHANGE_BEGIN
     log.setTAG(codecName + "-" + TAG);
     log.i("configureCodec: codecName = " + codec +
-            ", deviceNeedsAutoFrcWorkaround = " + deviceNeedsAutoFrcWorkaround +
+            ", deviceNeedsNoPostProcessWorkaround = " + deviceNeedsNoPostProcessWorkaround +
             ", format = " + format +
             ", surface = " + surface +
             ", crypto = " + crypto );
