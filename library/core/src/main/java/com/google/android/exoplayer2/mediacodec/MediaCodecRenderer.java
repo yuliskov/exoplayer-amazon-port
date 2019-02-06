@@ -532,7 +532,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
             : C.TIME_UNSET;
     resetInputBuffer();
     resetOutputBuffer();
-    //waitingForFirstSyncFrame = true;
+    waitingForFirstSyncSample = true;
     decoderCounters.decoderInitCount++;
   }
 
