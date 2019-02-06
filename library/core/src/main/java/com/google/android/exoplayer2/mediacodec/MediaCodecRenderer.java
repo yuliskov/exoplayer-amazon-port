@@ -516,20 +516,23 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
       throw ExoPlaybackException.createForRenderer(e, getIndex());
     }
 
-    codecName = codecInfo.name;// AMZN_CHANGE_ONELINE
-    codecAdaptationWorkaroundMode = codecAdaptationWorkaroundMode(codecName);
-    codecNeedsReconfigureWorkaround = codecNeedsReconfigureWorkaround(codecName);
-    codecNeedsDiscardToSpsWorkaround = codecNeedsDiscardToSpsWorkaround(codecName, inputFormat);
-    codecNeedsFlushWorkaround = codecNeedsFlushWorkaround(codecName);
-    codecNeedsEosFlushWorkaround = codecNeedsEosFlushWorkaround(codecName);
-    codecNeedsEosOutputExceptionWorkaround = codecNeedsEosOutputExceptionWorkaround(codecName);
-    codecNeedsMonoChannelCountWorkaround = codecNeedsMonoChannelCountWorkaround(codecName, inputFormat);
-    codecNeedsEosPropagation =
-        codecNeedsEosPropagationWorkaround(codecInfo) || getCodecNeedsEosPropagation();
-    codecHotswapDeadlineMs =
-        getState() == STATE_STARTED
-            ? (SystemClock.elapsedRealtime() + MAX_CODEC_HOTSWAP_TIME_MS)
-            : C.TIME_UNSET;
+    if (codecInfo != null) {
+      codecName = codecInfo.name;// AMZN_CHANGE_ONELINE
+      codecAdaptationWorkaroundMode = codecAdaptationWorkaroundMode(codecName);
+      codecNeedsReconfigureWorkaround = codecNeedsReconfigureWorkaround(codecName);
+      codecNeedsDiscardToSpsWorkaround = codecNeedsDiscardToSpsWorkaround(codecName, inputFormat);
+      codecNeedsFlushWorkaround = codecNeedsFlushWorkaround(codecName);
+      codecNeedsEosFlushWorkaround = codecNeedsEosFlushWorkaround(codecName);
+      codecNeedsEosOutputExceptionWorkaround = codecNeedsEosOutputExceptionWorkaround(codecName);
+      codecNeedsMonoChannelCountWorkaround = codecNeedsMonoChannelCountWorkaround(codecName, inputFormat);
+      codecNeedsEosPropagation =
+          codecNeedsEosPropagationWorkaround(codecInfo) || getCodecNeedsEosPropagation();
+      codecHotswapDeadlineMs =
+          getState() == STATE_STARTED
+              ? (SystemClock.elapsedRealtime() + MAX_CODEC_HOTSWAP_TIME_MS)
+              : C.TIME_UNSET;
+    }
+    
     resetInputBuffer();
     resetOutputBuffer();
     waitingForFirstSyncSample = true;
