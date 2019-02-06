@@ -519,11 +519,11 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     codecName = codecInfo.name;// AMZN_CHANGE_ONELINE
     codecAdaptationWorkaroundMode = codecAdaptationWorkaroundMode(codecName);
     codecNeedsReconfigureWorkaround = codecNeedsReconfigureWorkaround(codecName);
-    codecNeedsDiscardToSpsWorkaround = codecNeedsDiscardToSpsWorkaround(codecName, format);
+    codecNeedsDiscardToSpsWorkaround = codecNeedsDiscardToSpsWorkaround(codecName, inputFormat);
     codecNeedsFlushWorkaround = codecNeedsFlushWorkaround(codecName);
     codecNeedsEosFlushWorkaround = codecNeedsEosFlushWorkaround(codecName);
     codecNeedsEosOutputExceptionWorkaround = codecNeedsEosOutputExceptionWorkaround(codecName);
-    codecNeedsMonoChannelCountWorkaround = codecNeedsMonoChannelCountWorkaround(codecName, format);
+    codecNeedsMonoChannelCountWorkaround = codecNeedsMonoChannelCountWorkaround(codecName, inputFormat);
     codecNeedsEosPropagation =
         codecNeedsEosPropagationWorkaround(codecInfo) || getCodecNeedsEosPropagation();
     codecHotswapDeadlineMs =
@@ -532,7 +532,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
             : C.TIME_UNSET;
     resetInputBuffer();
     resetOutputBuffer();
-    waitingForFirstSyncFrame = true;
+    //waitingForFirstSyncFrame = true;
     decoderCounters.decoderInitCount++;
   }
 
