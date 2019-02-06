@@ -35,18 +35,23 @@ import android.widget.ListView;
 import android.widget.TextView;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.SimpleExoPlayer;
-import com.google.android.exoplayer2.castdemo.DemoUtil.Sample;
-import com.google.android.exoplayer2.ext.cast.CastPlayer;
+import com.google.android.exoplayer2.ext.cast.MediaItem;
 import com.google.android.exoplayer2.ui.PlayerControlView;
 import com.google.android.exoplayer2.ui.PlayerView;
+import com.google.android.gms.cast.CastMediaControlIntent;
 import com.google.android.gms.cast.framework.CastButtonFactory;
 import com.google.android.gms.cast.framework.CastContext;
+import com.google.android.gms.dynamite.DynamiteModule;
+import java.util.Collections;
 
 /**
- * An activity that plays video using {@link SimpleExoPlayer} and {@link CastPlayer}.
+ * An activity that plays video using {@link SimpleExoPlayer} and supports casting using ExoPlayer's
+ * Cast extension.
  */
-public class MainActivity extends AppCompatActivity implements OnClickListener,
-    PlayerManager.QueuePositionListener {
+public class MainActivity extends AppCompatActivity
+    implements OnClickListener, PlayerManager.QueueChangesListener {
+
+  private final MediaItem.Builder mediaItemBuilder;
 
   private PlayerView localPlayerView;
   private PlayerControlView castControlView;
@@ -55,13 +60,30 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
   private MediaQueueListAdapter mediaQueueListAdapter;
   private CastContext castContext;
 
+  public MainActivity() {
+    mediaItemBuilder = new MediaItem.Builder();
+  }
+
   // Activity lifecycle methods.
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     // Getting the cast context later than onStart can cause device discovery not to take place.
-    castContext = CastContext.getSharedInstance(this);
+    try {
+      castContext = CastContext.getSharedInstance(this);
+    } catch (RuntimeException e) {
+      Throwable cause = e.getCause();
+      while (cause != null) {
+        if (cause instanceof DynamiteModule.LoadingException) {
+          setContentView(R.layout.cast_context_error_message_layout);
+          return;
+        }
+        cause = cause.getCause();
+      }
+      // Unknown error. We propagate it.
+      throw e;
+    }
 
     setContentView(R.layout.main_activity);
 
@@ -91,22 +113,38 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
   @Override
   public void onResume() {
     super.onResume();
-    playerManager =
-        PlayerManager.createPlayerManager(
-            /* queuePositionListener= */ this,
-            localPlayerView,
-            castControlView,
-            /* context= */ this,
-            castContext);
+    if (castContext == null) {
+      // There is no Cast context to work with. Do nothing.
+      return;
+    }
+    String applicationId = castContext.getCastOptions().getReceiverApplicationId();
+    switch (applicationId) {
+      case CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID:
+        playerManager =
+            new DefaultReceiverPlayerManager(
+                /* queueChangesListener= */ this,
+                localPlayerView,
+                castControlView,
+                /* context= */ this,
+                castContext);
+        break;
+      default:
+        throw new IllegalStateException("Illegal receiver app id: " + applicationId);
+    }
     mediaQueueList.setAdapter(mediaQueueListAdapter);
   }
 
   @Override
   public void onPause() {
     super.onPause();
+    if (castContext == null) {
+      // Nothing to release.
+      return;
+    }
     mediaQueueListAdapter.notifyItemRangeRemoved(0, mediaQueueListAdapter.getItemCount());
     mediaQueueList.setAdapter(null);
     playerManager.release();
+    playerManager = null;
   }
 
   // Activity input.
@@ -124,7 +162,7 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
         .show();
   }
 
-  // PlayerManager.QueuePositionListener implementation.
+  // PlayerManager.QueueChangesListener implementation.
 
   @Override
   public void onQueuePositionChanged(int previousIndex, int newIndex) {
@@ -136,6 +174,11 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
     }
   }
 
+  @Override
+  public void onQueueContentsExternallyChanged() {
+    mediaQueueListAdapter.notifyDataSetChanged();
+  }
+
   // Internal methods.
 
   private View buildSampleListView() {
@@ -144,7 +187,19 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
     sampleList.setAdapter(new SampleListAdapter(this));
     sampleList.setOnItemClickListener(
         (parent, view, position, id) -> {
-          playerManager.addItem(DemoUtil.SAMPLES.get(position));
+          DemoUtil.Sample sample = DemoUtil.SAMPLES.get(position);
+          mediaItemBuilder
+              .clear()
+              .setMedia(sample.uri)
+              .setTitle(sample.name)
+              .setMimeType(sample.mimeType);
+          if (sample.drmSchemeUuid != null) {
+            mediaItemBuilder.setDrmSchemes(
+                Collections.singletonList(
+                    new MediaItem.DrmScheme(
+                        sample.drmSchemeUuid, new MediaItem.UriBundle(sample.licenseServerUri))));
+          }
+          playerManager.addItem(mediaItemBuilder.build());
           mediaQueueListAdapter.notifyItemInserted(playerManager.getMediaQueueSize() - 1);
         });
     return dialogList;
@@ -181,7 +236,7 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
     @Override
     public void onBindViewHolder(QueueItemViewHolder holder, int position) {
       TextView view = holder.textView;
-      view.setText(playerManager.getItem(position).name);
+      view.setText(playerManager.getItem(position).title);
       // TODO: Solve coloring using the theme's ColorStateList.
       view.setTextColor(ColorUtils.setAlphaComponent(view.getCurrentTextColor(),
            position == playerManager.getCurrentItemIndex() ? 255 : 100));
@@ -224,6 +279,8 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
       int position = viewHolder.getAdapterPosition();
       if (playerManager.removeItem(position)) {
         mediaQueueListAdapter.notifyItemRemoved(position);
+        // Update whichever item took its place, in case it became the new selected item.
+        mediaQueueListAdapter.notifyItemChanged(position);
       }
     }
 
@@ -244,12 +301,11 @@ public class MainActivity extends AppCompatActivity implements OnClickListener,
 
   }
 
-  private static final class SampleListAdapter extends ArrayAdapter<Sample> {
+  private static final class SampleListAdapter extends ArrayAdapter<DemoUtil.Sample> {
 
     public SampleListAdapter(Context context) {
       super(context, android.R.layout.simple_list_item_1, DemoUtil.SAMPLES);
     }
-
   }
 
 }

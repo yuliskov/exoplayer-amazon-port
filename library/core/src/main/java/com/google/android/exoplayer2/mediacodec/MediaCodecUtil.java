@@ -39,7 +39,6 @@ import java.util.regex.Pattern;
 /**
  * A utility class for querying the available codecs.
  */
-@TargetApi(16)
 @SuppressLint("InlinedApi")
 public final class MediaCodecUtil {
 
@@ -59,8 +58,6 @@ public final class MediaCodecUtil {
 
   private static final String TAG = "MediaCodecUtil";
   private static final Pattern PROFILE_PATTERN = Pattern.compile("^\\D?(\\d+)$");
-  private static final RawAudioCodecComparator RAW_AUDIO_CODEC_COMPARATOR =
-      new RawAudioCodecComparator();
 
   private static final HashMap<CodecKey, List<MediaCodecInfo>> decoderInfosCache = new HashMap<>();
 
@@ -312,16 +309,6 @@ public final class MediaCodecUtil {
       return false;
     }
 
-    // Work around https://github.com/google/ExoPlayer/issues/398.
-    if (Util.SDK_INT < 18 && "OMX.SEC.MP3.Decoder".equals(name)) {
-      return false;
-    }
-
-    // Work around https://github.com/google/ExoPlayer/issues/4519.
-    if ("OMX.SEC.mp3.dec".equals(name) && "SM-T530".equals(Util.MODEL)) {
-      return false;
-    }
-
     // Work around https://github.com/google/ExoPlayer/issues/1528 and
     // https://github.com/google/ExoPlayer/issues/3171.
     if (Util.SDK_INT < 18 && "OMX.MTK.AUDIO.DECODER.AAC".equals(name)
@@ -408,7 +395,18 @@ public final class MediaCodecUtil {
    */
   private static void applyWorkarounds(String mimeType, List<MediaCodecInfo> decoderInfos) {
     if (MimeTypes.AUDIO_RAW.equals(mimeType)) {
-      Collections.sort(decoderInfos, RAW_AUDIO_CODEC_COMPARATOR);
+      Collections.sort(decoderInfos, new RawAudioCodecComparator());
+    } else if (Util.SDK_INT < 21 && decoderInfos.size() > 1) {
+      String firstCodecName = decoderInfos.get(0).name;
+      if ("OMX.SEC.mp3.dec".equals(firstCodecName)
+          || "OMX.SEC.MP3.Decoder".equals(firstCodecName)
+          || "OMX.brcm.audio.mp3.decoder".equals(firstCodecName)) {
+        // Prefer OMX.google codecs over OMX.SEC.mp3.dec, OMX.SEC.MP3.Decoder and
+        // OMX.brcm.audio.mp3.decoder on older devices. See:
+        // https://github.com/google/ExoPlayer/issues/398 and
+        // https://github.com/google/ExoPlayer/issues/4519.
+        Collections.sort(decoderInfos, new PreferOmxGoogleCodecComparator());
+      }
     }
   }
 
@@ -711,6 +709,18 @@ public final class MediaCodecUtil {
         return 1;
       }
       return 0;
+    }
+  }
+
+  /** Comparator for preferring OMX.google media codecs. */
+  private static final class PreferOmxGoogleCodecComparator implements Comparator<MediaCodecInfo> {
+    @Override
+    public int compare(MediaCodecInfo a, MediaCodecInfo b) {
+      return scoreMediaCodecInfo(a) - scoreMediaCodecInfo(b);
+    }
+
+    private static int scoreMediaCodecInfo(MediaCodecInfo mediaCodecInfo) {
+      return mediaCodecInfo.name.startsWith("OMX.google") ? -1 : 0;
     }
   }
 

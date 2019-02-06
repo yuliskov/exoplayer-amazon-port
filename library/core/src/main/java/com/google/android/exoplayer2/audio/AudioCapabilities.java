@@ -34,11 +34,11 @@ import java.util.Arrays;
 @TargetApi(21)
 public final class AudioCapabilities {
 
-  /**
-   * The minimum audio capabilities supported by all devices.
-   */
+  private static final int DEFAULT_MAX_CHANNEL_COUNT = 8;
+
+  /** The minimum audio capabilities supported by all devices. */
   public static final AudioCapabilities DEFAULT_AUDIO_CAPABILITIES =
-      new AudioCapabilities(new int[] {AudioFormat.ENCODING_PCM_16BIT}, 2);
+      new AudioCapabilities(new int[] {AudioFormat.ENCODING_PCM_16BIT}, DEFAULT_MAX_CHANNEL_COUNT);
 
   // AMZN_CHANGE_BEGIN
    /** For Optical output, we read this global setting to detect if dolby
@@ -87,8 +87,10 @@ public final class AudioCapabilities {
     if (intent == null || intent.getIntExtra(AudioManager.EXTRA_AUDIO_PLUG_STATE, 0) == 0) {
       return DEFAULT_AUDIO_CAPABILITIES;
     }
-    return new AudioCapabilities(intent.getIntArrayExtra(AudioManager.EXTRA_ENCODINGS),
-        intent.getIntExtra(AudioManager.EXTRA_MAX_CHANNEL_COUNT, 0));
+    return new AudioCapabilities(
+        intent.getIntArrayExtra(AudioManager.EXTRA_ENCODINGS),
+        intent.getIntExtra(
+            AudioManager.EXTRA_MAX_CHANNEL_COUNT, /* defaultValue= */ DEFAULT_MAX_CHANNEL_COUNT));
   }
 
   // AMZN_CHANGE_BEGIN

@@ -20,6 +20,7 @@ import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.Assertions;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
@@ -30,37 +31,50 @@ import java.util.Arrays;
 public final class DataSpec {
 
   /**
-   * The flags that apply to any request for data. Possible flag values are {@link #FLAG_ALLOW_GZIP}
-   * and {@link #FLAG_ALLOW_CACHING_UNKNOWN_LENGTH}.
+   * The flags that apply to any request for data. Possible flag values are {@link
+   * #FLAG_ALLOW_GZIP}, {@link #FLAG_ALLOW_ICY_METADATA}, {@link #FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN}
+   * and {@link #FLAG_ALLOW_CACHE_FRAGMENTATION}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef(
       flag = true,
-      value = {FLAG_ALLOW_GZIP, FLAG_ALLOW_CACHING_UNKNOWN_LENGTH})
+      value = {
+        FLAG_ALLOW_GZIP,
+        FLAG_ALLOW_ICY_METADATA,
+        FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN,
+        FLAG_ALLOW_CACHE_FRAGMENTATION
+      })
   public @interface Flags {}
   /**
-   * Permits an underlying network stack to request that the server use gzip compression.
-   * <p>
-   * Should not typically be set if the data being requested is already compressed (e.g. most audio
-   * and video requests). May be set when requesting other data.
-   * <p>
-   * When a {@link DataSource} is used to request data with this flag set, and if the
-   * {@link DataSource} does make a network request, then the value returned from
-   * {@link DataSource#open(DataSpec)} will typically be {@link C#LENGTH_UNSET}. The data read from
-   * {@link DataSource#read(byte[], int, int)} will be the decompressed data.
+   * Allows an underlying network stack to request that the server use gzip compression.
+   *
+   * <p>Should not typically be set if the data being requested is already compressed (e.g. most
+   * audio and video requests). May be set when requesting other data.
+   *
+   * <p>When a {@link DataSource} is used to request data with this flag set, and if the {@link
+   * DataSource} does make a network request, then the value returned from {@link
+   * DataSource#open(DataSpec)} will typically be {@link C#LENGTH_UNSET}. The data read from {@link
+   * DataSource#read(byte[], int, int)} will be the decompressed data.
    */
   public static final int FLAG_ALLOW_GZIP = 1;
-
+  /** Allows an underlying network stack to request that the stream contain ICY metadata. */
+  public static final int FLAG_ALLOW_ICY_METADATA = 1 << 1; // 2
+  /** Prevents caching if the length cannot be resolved when the {@link DataSource} is opened. */
+  public static final int FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN = 1 << 2; // 4
   /**
-   * Permits content to be cached even if its length can not be resolved. Typically this's the case
-   * for progressive live streams and when {@link #FLAG_ALLOW_GZIP} is used.
+   * Allows fragmentation of this request into multiple cache files, meaning a cache eviction policy
+   * will be able to evict individual fragments of the data. Depending on the cache implementation,
+   * setting this flag may also enable more concurrent access to the data (e.g. reading one fragment
+   * whilst writing another).
    */
-  public static final int FLAG_ALLOW_CACHING_UNKNOWN_LENGTH = 1 << 1; // 2
+  public static final int FLAG_ALLOW_CACHE_FRAGMENTATION = 1 << 4; // 8
 
   /**
    * The set of HTTP methods that are supported by ExoPlayer {@link HttpDataSource}s. One of {@link
    * #HTTP_METHOD_GET}, {@link #HTTP_METHOD_POST} or {@link #HTTP_METHOD_HEAD}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({HTTP_METHOD_GET, HTTP_METHOD_POST, HTTP_METHOD_HEAD})
   public @interface HttpMethod {}
@@ -108,10 +122,7 @@ public final class DataSpec {
    * {@link DataSpec} is not intended to be used in conjunction with a cache.
    */
   public final @Nullable String key;
-  /**
-   * Request flags. Currently {@link #FLAG_ALLOW_GZIP} and
-   * {@link #FLAG_ALLOW_CACHING_UNKNOWN_LENGTH} are the only supported flags.
-   */
+  /** Request {@link Flags flags}. */
   public final @Flags int flags;
 
   /**

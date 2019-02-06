@@ -15,16 +15,20 @@
  */
 package com.google.android.exoplayer2.util;
 
+import static android.content.Context.UI_MODE_SERVICE;
+
 import android.Manifest.permission;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.app.UiModeManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.Configuration;
 import android.graphics.Point;
 import android.media.AudioFormat;
 import android.net.ConnectivityManager;
@@ -44,8 +48,15 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.Renderer;
+import com.google.android.exoplayer2.RendererCapabilities;
+import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.SeekParameters;
+import com.google.android.exoplayer2.audio.AudioRendererEventListener;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
+import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.video.VideoRendererEventListener;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -173,7 +184,7 @@ public final class Util {
       return false;
     }
     for (Uri uri : uris) {
-      if (Util.isLocalFileUri(uri)) {
+      if (isLocalFileUri(uri)) {
         if (activity.checkSelfPermission(permission.READ_EXTERNAL_STORAGE)
             != PackageManager.PERMISSION_GRANTED) {
           activity.requestPermissions(new String[] {permission.READ_EXTERNAL_STORAGE}, 0);
@@ -200,7 +211,8 @@ public final class Util {
     }
     for (Uri uri : uris) {
       if ("http".equals(uri.getScheme())
-          && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(uri.getHost())) {
+          && !NetworkSecurityPolicy.getInstance()
+              .isCleartextTrafficPermitted(Assertions.checkNotNull(uri.getHost()))) {
         // The security policy prevents cleartext traffic.
         return false;
       }
@@ -242,7 +254,7 @@ public final class Util {
    */
   public static boolean contains(Object[] items, Object item) {
     for (Object arrayItem : items) {
-      if (Util.areEqual(arrayItem, item)) {
+      if (areEqual(arrayItem, item)) {
         return true;
       }
     }
@@ -406,9 +418,10 @@ public final class Util {
   }
 
   /**
-   * Returns a normalized RFC 639-2/T code for {@code language}.
+   * Returns a normalized ISO 639-2/T code for {@code language}.
    *
-   * @param language A case-insensitive ISO 639 alpha-2 or alpha-3 language code.
+   * @param language A case-insensitive ISO 639-1 two-letter or ISO 639-2 three-letter language
+   *     code.
    * @return The all-lowercase normalized code, or null if the input was null, or {@code
    *     language.toLowerCase()} if the language could not be normalized.
    */
@@ -634,7 +647,7 @@ public final class Util {
     if (index < 0) {
       index = -(index + 2);
     } else {
-      while ((--index) >= 0 && array[index] == value) {}
+      while (--index >= 0 && array[index] == value) {}
       if (inclusive) {
         index++;
       }
@@ -666,7 +679,7 @@ public final class Util {
     if (index < 0) {
       index = -(index + 2);
     } else {
-      while ((--index) >= 0 && array[index] == value) {}
+      while (--index >= 0 && array[index] == value) {}
       if (inclusive) {
         index++;
       }
@@ -702,7 +715,7 @@ public final class Util {
     if (index < 0) {
       index = -(index + 2);
     } else {
-      while ((--index) >= 0 && list.get(index).compareTo(value) == 0) {}
+      while (--index >= 0 && list.get(index).compareTo(value) == 0) {}
       if (inclusive) {
         index++;
       }
@@ -730,12 +743,45 @@ public final class Util {
    *     equal to) {@code value}.
    */
   public static int binarySearchCeil(
+      int[] array, int value, boolean inclusive, boolean stayInBounds) {
+    int index = Arrays.binarySearch(array, value);
+    if (index < 0) {
+      index = ~index;
+    } else {
+      while (++index < array.length && array[index] == value) {}
+      if (inclusive) {
+        index--;
+      }
+    }
+    return stayInBounds ? Math.min(array.length - 1, index) : index;
+  }
+
+  /**
+   * Returns the index of the smallest element in {@code array} that is greater than (or optionally
+   * equal to) a specified {@code value}.
+   *
+   * <p>The search is performed using a binary search algorithm, so the array must be sorted. If the
+   * array contains multiple elements equal to {@code value} and {@code inclusive} is true, the
+   * index of the last one will be returned.
+   *
+   * @param array The array to search.
+   * @param value The value being searched for.
+   * @param inclusive If the value is present in the array, whether to return the corresponding
+   *     index. If false then the returned index corresponds to the smallest element strictly
+   *     greater than the value.
+   * @param stayInBounds If true, then {@code (a.length - 1)} will be returned in the case that the
+   *     value is greater than the largest element in the array. If false then {@code a.length} will
+   *     be returned.
+   * @return The index of the smallest element in {@code array} that is greater than (or optionally
+   *     equal to) {@code value}.
+   */
+  public static int binarySearchCeil(
       long[] array, long value, boolean inclusive, boolean stayInBounds) {
     int index = Arrays.binarySearch(array, value);
     if (index < 0) {
       index = ~index;
     } else {
-      while ((++index) < array.length && array[index] == value) {}
+      while (++index < array.length && array[index] == value) {}
       if (inclusive) {
         index--;
       }
@@ -773,7 +819,7 @@ public final class Util {
       index = ~index;
     } else {
       int listSize = list.size();
-      while ((++index) < listSize && list.get(index).compareTo(value) == 0) {}
+      while (++index < listSize && list.get(index).compareTo(value) == 0) {}
       if (inclusive) {
         index--;
       }
@@ -1352,7 +1398,7 @@ public final class Util {
    * @return The derived {@link UUID}, or {@code null} if one could not be derived.
    */
   public static @Nullable UUID getDrmUuid(String drmScheme) {
-    switch (Util.toLowerInvariant(drmScheme)) {
+    switch (toLowerInvariant(drmScheme)) {
       case "widevine":
         return C.WIDEVINE_UUID;
       case "playready":
@@ -1402,7 +1448,7 @@ public final class Util {
    */
   @C.ContentType
   public static int inferContentType(String fileName) {
-    fileName = Util.toLowerInvariant(fileName);
+    fileName = toLowerInvariant(fileName);
     if (fileName.endsWith(".mpd")) {
       return C.TYPE_DASH;
     } else if (fileName.endsWith(".m3u8")) {
@@ -1436,11 +1482,12 @@ public final class Util {
   }
 
   /**
-   * Maps a {@link C} {@code TRACK_TYPE_*} constant to the corresponding {@link C}
-   * {@code DEFAULT_*_BUFFER_SIZE} constant.
+   * Maps a {@link C} {@code TRACK_TYPE_*} constant to the corresponding {@link C} {@code
+   * DEFAULT_*_BUFFER_SIZE} constant.
    *
    * @param trackType The track type.
    * @return The corresponding default buffer size in bytes.
+   * @throws IllegalArgumentException If the track type is an unrecognized or custom track type.
    */
   public static int getDefaultBufferSize(int trackType) {
     switch (trackType) {
@@ -1456,8 +1503,10 @@ public final class Util {
         return C.DEFAULT_METADATA_BUFFER_SIZE;
       case C.TRACK_TYPE_CAMERA_MOTION:
         return C.DEFAULT_CAMERA_MOTION_BUFFER_SIZE;
+      case C.TRACK_TYPE_NONE:
+        return 0;
       default:
-        throw new IllegalStateException();
+        throw new IllegalArgumentException();
     }
   }
 
@@ -1565,7 +1614,7 @@ public final class Util {
    * and is not declared to be thrown.
    */
   public static void sneakyThrow(Throwable t) {
-    Util.sneakyThrowInternal(t);
+    sneakyThrowInternal(t);
   }
 
   @SuppressWarnings("unchecked")
@@ -1616,31 +1665,24 @@ public final class Util {
   }
 
   /**
-   * Returns the {@link C.NetworkType} of the current network connection. {@link
-   * C#NETWORK_TYPE_UNKNOWN} will be returned if the {@code ACCESS_NETWORK_STATE} permission is not
-   * granted or the network connection type couldn't be determined.
+   * Returns the {@link C.NetworkType} of the current network connection.
    *
    * @param context A context to access the connectivity manager.
-   * @return The {@link C.NetworkType} of the current network connection, or {@link
-   *     C#NETWORK_TYPE_UNKNOWN} if the {@code ACCESS_NETWORK_STATE} permission is not granted or
-   *     {@code context} is null.
+   * @return The {@link C.NetworkType} of the current network connection.
    */
-  public static @C.NetworkType int getNetworkType(@Nullable Context context) {
+  @C.NetworkType
+  public static int getNetworkType(Context context) {
     if (context == null) {
+      // Note: This is for backward compatibility only (context used to be @Nullable).
       return C.NETWORK_TYPE_UNKNOWN;
     }
     NetworkInfo networkInfo;
-    try {
-      ConnectivityManager connectivityManager =
-          (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-      if (connectivityManager == null) {
-        return C.NETWORK_TYPE_UNKNOWN;
-      }
-      networkInfo = connectivityManager.getActiveNetworkInfo();
-    } catch (SecurityException e) {
-      // Permission ACCESS_NETWORK_STATE not granted.
+    ConnectivityManager connectivityManager =
+        (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+    if (connectivityManager == null) {
       return C.NETWORK_TYPE_UNKNOWN;
     }
+    networkInfo = connectivityManager.getActiveNetworkInfo();
     if (networkInfo == null || !networkInfo.isConnected()) {
       return C.NETWORK_TYPE_OFFLINE;
     }
@@ -1655,7 +1697,7 @@ public final class Util {
         return getMobileNetworkType(networkInfo);
       case ConnectivityManager.TYPE_ETHERNET:
         return C.NETWORK_TYPE_ETHERNET;
-      default: // Ethernet, VPN, Bluetooth, Dummy.
+      default: // VPN, Bluetooth, Dummy.
         return C.NETWORK_TYPE_OTHER;
     }
   }
@@ -1729,6 +1771,20 @@ public final class Util {
   }
 
   /**
+   * Returns whether the app is running on a TV device.
+   *
+   * @param context Any context.
+   * @return Whether the app is running on a TV device.
+   */
+  public static boolean isTv(Context context) {
+    // See https://developer.android.com/training/tv/start/hardware.html#runtime-check.
+    UiModeManager uiModeManager =
+        (UiModeManager) context.getApplicationContext().getSystemService(UI_MODE_SERVICE);
+    return uiModeManager != null
+        && uiModeManager.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+  }
+
+  /**
    * Gets the physical size of the default display, in pixels.
    *
    * @param context Any context.
@@ -1747,43 +1803,40 @@ public final class Util {
    * @return The physical display size, in pixels.
    */
   public static Point getPhysicalDisplaySize(Context context, Display display) {
-    if (Util.SDK_INT < 25 && display.getDisplayId() == Display.DEFAULT_DISPLAY) {
-      // Before API 25 the Display object does not provide a working way to identify Android TVs
-      // that can show 4k resolution in a SurfaceView, so check for supported devices here.
-      if ("Sony".equals(Util.MANUFACTURER) && Util.MODEL.startsWith("BRAVIA")
+    if (Util.SDK_INT <= 28 && display.getDisplayId() == Display.DEFAULT_DISPLAY && isTv(context)) {
+      // On Android TVs it is common for the UI to be configured for a lower resolution than
+      // SurfaceViews can output. Before API 26 the Display object does not provide a way to
+      // identify this case, and up to and including API 28 many devices still do not correctly set
+      // their hardware compositor output size.
+
+      // Sony Android TVs advertise support for 4k output via a system feature.
+      if ("Sony".equals(Util.MANUFACTURER)
+          && Util.MODEL.startsWith("BRAVIA")
           && context.getPackageManager().hasSystemFeature("com.sony.dtv.hardware.panel.qfhd")) {
         return new Point(3840, 2160);
-      } else if (("NVIDIA".equals(Util.MANUFACTURER) && Util.MODEL.contains("SHIELD"))
-          || ("philips".equals(Util.toLowerInvariant(Util.MANUFACTURER))
-              && (Util.MODEL.startsWith("QM1")
-                  || Util.MODEL.equals("QV151E")
-                  || Util.MODEL.equals("TPM171E")))) {
-        // Attempt to read sys.display-size.
-        String sysDisplaySize = null;
+      }
+
+      // Otherwise check the system property for display size. From API 28 treble may prevent the
+      // system from writing sys.display-size so we check vendor.display-size instead.
+      String displaySize =
+          Util.SDK_INT < 28
+              ? getSystemProperty("sys.display-size")
+              : getSystemProperty("vendor.display-size");
+      // If we managed to read the display size, attempt to parse it.
+      if (!TextUtils.isEmpty(displaySize)) {
         try {
-          @SuppressLint("PrivateApi")
-          Class<?> systemProperties = Class.forName("android.os.SystemProperties");
-          Method getMethod = systemProperties.getMethod("get", String.class);
-          sysDisplaySize = (String) getMethod.invoke(systemProperties, "sys.display-size");
-        } catch (Exception e) {
-          Log.e(TAG, "Failed to read sys.display-size", e);
-        }
-        // If we managed to read sys.display-size, attempt to parse it.
-        if (!TextUtils.isEmpty(sysDisplaySize)) {
-          try {
-            String[] sysDisplaySizeParts = split(sysDisplaySize.trim(), "x");
-            if (sysDisplaySizeParts.length == 2) {
-              int width = Integer.parseInt(sysDisplaySizeParts[0]);
-              int height = Integer.parseInt(sysDisplaySizeParts[1]);
-              if (width > 0 && height > 0) {
-                return new Point(width, height);
-              }
+          String[] displaySizeParts = split(displaySize.trim(), "x");
+          if (displaySizeParts.length == 2) {
+            int width = Integer.parseInt(displaySizeParts[0]);
+            int height = Integer.parseInt(displaySizeParts[1]);
+            if (width > 0 && height > 0) {
+              return new Point(width, height);
             }
-          } catch (NumberFormatException e) {
-            // Do nothing.
           }
-          Log.e(TAG, "Invalid sys.display-size: " + sysDisplaySize);
+        } catch (NumberFormatException e) {
+          // Do nothing.
         }
+        Log.e(TAG, "Invalid display size: " + displaySize);
       }
     }
 
@@ -1792,12 +1845,49 @@ public final class Util {
       getDisplaySizeV23(display, displaySize);
     } else if (Util.SDK_INT >= 17) {
       getDisplaySizeV17(display, displaySize);
-    } else if (Util.SDK_INT >= 16) {
-      getDisplaySizeV16(display, displaySize);
     } else {
-      getDisplaySizeV9(display, displaySize);
+      getDisplaySizeV16(display, displaySize);
     }
     return displaySize;
+  }
+
+  /**
+   * Extract renderer capabilities for the renderers created by the provided renderers factory.
+   *
+   * @param renderersFactory A {@link RenderersFactory}.
+   * @param drmSessionManager An optional {@link DrmSessionManager} used by the renderers.
+   * @return The {@link RendererCapabilities} for each renderer created by the {@code
+   *     renderersFactory}.
+   */
+  public static RendererCapabilities[] getRendererCapabilities(
+      RenderersFactory renderersFactory,
+      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
+    Renderer[] renderers =
+        renderersFactory.createRenderers(
+            new Handler(),
+            new VideoRendererEventListener() {},
+            new AudioRendererEventListener() {},
+            (cues) -> {},
+            (metadata) -> {},
+            drmSessionManager);
+    RendererCapabilities[] capabilities = new RendererCapabilities[renderers.length];
+    for (int i = 0; i < renderers.length; i++) {
+      capabilities[i] = renderers[i].getCapabilities();
+    }
+    return capabilities;
+  }
+
+  @Nullable
+  private static String getSystemProperty(String name) {
+    try {
+      @SuppressLint("PrivateApi")
+      Class<?> systemProperties = Class.forName("android.os.SystemProperties");
+      Method getMethod = systemProperties.getMethod("get", String.class);
+      return (String) getMethod.invoke(systemProperties, name);
+    } catch (Exception e) {
+      Log.e(TAG, "Failed to read system property " + name, e);
+      return null;
+    }
   }
 
   @TargetApi(23)
@@ -1812,15 +1902,8 @@ public final class Util {
     display.getRealSize(outSize);
   }
 
-  @TargetApi(16)
   private static void getDisplaySizeV16(Display display, Point outSize) {
     display.getSize(outSize);
-  }
-
-  @SuppressWarnings("deprecation")
-  private static void getDisplaySizeV9(Display display, Point outSize) {
-    outSize.x = display.getWidth();
-    outSize.y = display.getHeight();
   }
 
   private static @C.NetworkType int getMobileNetworkType(NetworkInfo networkInfo) {

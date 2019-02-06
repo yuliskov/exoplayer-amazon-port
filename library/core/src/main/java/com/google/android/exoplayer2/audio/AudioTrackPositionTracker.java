@@ -28,6 +28,7 @@ import com.google.android.exoplayer2.util.AmazonQuirks;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Logger;
 import com.google.android.exoplayer2.util.Util;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Method;
@@ -100,6 +101,7 @@ import java.lang.reflect.Method;
   }
   private static final String TAG = AudioTrackPositionTracker.class.getSimpleName();
   /** {@link AudioTrack} playback states. */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({PLAYSTATE_STOPPED, PLAYSTATE_PAUSED, PLAYSTATE_PLAYING})
   private @interface PlayState {}

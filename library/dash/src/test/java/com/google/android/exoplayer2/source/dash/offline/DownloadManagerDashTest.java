@@ -25,10 +25,12 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.ConditionVariable;
 import android.support.annotation.Nullable;
+import com.google.android.exoplayer2.offline.DefaultDownloaderFactory;
 import com.google.android.exoplayer2.offline.DownloadAction;
 import com.google.android.exoplayer2.offline.DownloadManager;
 import com.google.android.exoplayer2.offline.DownloaderConstructorHelper;
 import com.google.android.exoplayer2.offline.StreamKey;
+import com.google.android.exoplayer2.scheduler.Requirements;
 import com.google.android.exoplayer2.testutil.DummyMainThread;
 import com.google.android.exoplayer2.testutil.FakeDataSet;
 import com.google.android.exoplayer2.testutil.FakeDataSource;
@@ -51,6 +53,7 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLog;
 
 /** Tests {@link DownloadManager}. */
 @RunWith(RobolectricTestRunner.class)
@@ -71,6 +74,7 @@ public class DownloadManagerDashTest {
 
   @Before
   public void setUp() throws Exception {
+    ShadowLog.stream = System.out;
     dummyMainThread = new DummyMainThread();
     Context context = RuntimeEnvironment.application;
     tempFolder = Util.createTempDirectory(context, "ExoPlayerTest");
@@ -200,6 +204,8 @@ public class DownloadManagerDashTest {
     assertCacheEmpty(cache);
   }
 
+  // Disabled due to flakiness [Internal: b/122290449].
+  @Ignore
   @Test
   public void testHandleInterferingRemoveAction() throws Throwable {
     final ConditionVariable downloadInProgressCondition = new ConditionVariable();
@@ -238,15 +244,16 @@ public class DownloadManagerDashTest {
           Factory fakeDataSourceFactory = new FakeDataSource.Factory().setFakeDataSet(fakeDataSet);
           downloadManager =
               new DownloadManager(
-                  new DownloaderConstructorHelper(cache, fakeDataSourceFactory),
+                  RuntimeEnvironment.application,
+                  actionFile,
+                  new DefaultDownloaderFactory(
+                      new DownloaderConstructorHelper(cache, fakeDataSourceFactory)),
                   /* maxSimultaneousDownloads= */ 1,
                   /* minRetryCount= */ 3,
-                  actionFile,
-                  DashDownloadAction.DESERIALIZER);
+                  new Requirements(0));
 
           downloadManagerListener =
               new TestDownloadManagerListener(downloadManager, dummyMainThread);
-          downloadManager.addListener(downloadManagerListener);
           downloadManager.startDownloads();
         });
   }
@@ -257,9 +264,13 @@ public class DownloadManagerDashTest {
     Collections.addAll(keysList, keys);
     DownloadAction result;
     if (isRemoveAction) {
-      result = DashDownloadAction.createRemoveAction(uri, data);
+      result =
+          DownloadAction.createRemoveAction(
+              DownloadAction.TYPE_DASH, uri, /* customCacheKey= */ null);
     } else {
-      result = DashDownloadAction.createDownloadAction(uri, data, keysList);
+      result =
+          DownloadAction.createDownloadAction(
+              DownloadAction.TYPE_DASH, uri, keysList, /* customCacheKey= */ null, data);
     }
     return result;
   }

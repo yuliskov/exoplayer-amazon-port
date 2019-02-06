@@ -26,7 +26,7 @@ android {
     defaultConfig {
         versionName project.ext.releaseVersion
         versionCode project.ext.releaseVersionCode
-        minSdkVersion 16
+        minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.targetSdkVersion
     }
 
@@ -47,6 +47,16 @@ android {
     lintOptions {
         // The demo app does not have translations.
         disable 'MissingTranslation'
+    }
+
+    flavorDimensions "receiver"
+
+    productFlavors {
+        defaultCast {
+            dimension "receiver"
+            manifestPlaceholders =
+                    [castOptionsProvider: "com.google.android.exoplayer2.ext.cast.DefaultCastOptionsProvider"]
+        }
     }
 
 }

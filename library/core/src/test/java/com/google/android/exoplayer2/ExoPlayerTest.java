@@ -60,6 +60,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
@@ -266,10 +267,8 @@ public final class ExoPlayerTest {
         new FakeMediaSource(timeline, new Object(), Builder.VIDEO_FORMAT) {
           @Override
           public synchronized void prepareSourceInternal(
-              ExoPlayer player,
-              boolean isTopLevelSource,
               @Nullable TransferListener mediaTransferListener) {
-            super.prepareSourceInternal(player, isTopLevelSource, mediaTransferListener);
+            super.prepareSourceInternal(mediaTransferListener);
             // We've queued a source info refresh on the playback thread's event queue. Allow the
             // test thread to prepare the player with the third source, and block this thread (the
             // playback thread) until the test thread's call to prepare() has returned.
@@ -497,12 +496,12 @@ public final class ExoPlayerTest {
             .waitForPlaybackState(Player.STATE_READY)
             .seek(10)
             // Start playback and wait until playback reaches second window.
-            .play()
-            .waitForPositionDiscontinuity()
+            .playUntilStartOfWindow(/* windowIndex= */ 1)
             // Seek twice in concession, expecting the first seek to be replaced (and thus except
             // only on seek processed callback).
             .seek(5)
             .seek(60)
+            .play()
             .build();
     final List<Integer> playbackStatesWhenSeekProcessed = new ArrayList<>();
     EventListener eventListener =
@@ -772,7 +771,7 @@ public final class ExoPlayerTest {
     }
     // There are 2 renderers, and track selections are made twice. The second time one renderer is
     // disabled, so only one out of the two track selections is enabled.
-    assertThat(createdTrackSelections).hasSize(4);
+    assertThat(createdTrackSelections).hasSize(3);
     assertThat(numSelectionsEnabled).isEqualTo(3);
   }
 
@@ -1346,7 +1345,7 @@ public final class ExoPlayerTest {
                 () ->
                     concatenatingMediaSource.addMediaSources(
                         Arrays.asList(mediaSource, mediaSource)))
-            .waitForTimelineChanged(null)
+            .waitForTimelineChanged()
             .executeRunnable(
                 new PlayerRunnable() {
                   @Override
@@ -2029,15 +2028,17 @@ public final class ExoPlayerTest {
             .blockUntilEnded(TIMEOUT_MS);
     testRunner.assertPlayedPeriodIndices(0, 1);
     // Assert that the second period was re-created from the new timeline.
-    assertThat(mediaSource.getCreatedMediaPeriods())
-        .containsExactly(
-            new MediaPeriodId(
-                timeline1.getUidOfPeriod(/* periodIndex= */ 0), /* windowSequenceNumber= */ 0),
-            new MediaPeriodId(
-                timeline1.getUidOfPeriod(/* periodIndex= */ 1), /* windowSequenceNumber= */ 1),
-            new MediaPeriodId(
-                timeline2.getUidOfPeriod(/* periodIndex= */ 1), /* windowSequenceNumber= */ 2))
-        .inOrder();
+    assertThat(mediaSource.getCreatedMediaPeriods()).hasSize(3);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(0).periodUid)
+        .isEqualTo(timeline1.getUidOfPeriod(/* periodIndex= */ 0));
+    assertThat(mediaSource.getCreatedMediaPeriods().get(1).periodUid)
+        .isEqualTo(timeline1.getUidOfPeriod(/* periodIndex= */ 1));
+    assertThat(mediaSource.getCreatedMediaPeriods().get(2).periodUid)
+        .isEqualTo(timeline2.getUidOfPeriod(/* periodIndex= */ 1));
+    assertThat(mediaSource.getCreatedMediaPeriods().get(1).windowSequenceNumber)
+        .isGreaterThan(mediaSource.getCreatedMediaPeriods().get(0).windowSequenceNumber);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(2).windowSequenceNumber)
+        .isGreaterThan(mediaSource.getCreatedMediaPeriods().get(1).windowSequenceNumber);
   }
 
   @Test
@@ -2057,8 +2058,11 @@ public final class ExoPlayerTest {
             .pause()
             .waitForPlaybackState(Player.STATE_READY)
             .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .waitForSeekProcessed()
             .seek(/* windowIndex= */ 0, /* positionMs= */ 1)
+            .waitForSeekProcessed()
             .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .waitForSeekProcessed()
             .play()
             .build();
     ExoPlayerTestRunner testRunner =
@@ -2192,14 +2196,14 @@ public final class ExoPlayerTest {
             startPositionUs + expectedDurationUs);
     Clock clock = new AutoAdvancingFakeClock();
     AtomicReference<Player> playerReference = new AtomicReference<>();
-    AtomicReference<Long> positionAtDiscontinuityMs = new AtomicReference<>();
-    AtomicReference<Long> clockAtStartMs = new AtomicReference<>();
-    AtomicReference<Long> clockAtDiscontinuityMs = new AtomicReference<>();
+    AtomicLong positionAtDiscontinuityMs = new AtomicLong(C.TIME_UNSET);
+    AtomicLong clockAtStartMs = new AtomicLong(C.TIME_UNSET);
+    AtomicLong clockAtDiscontinuityMs = new AtomicLong(C.TIME_UNSET);
     EventListener eventListener =
         new EventListener() {
           @Override
           public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-            if (playbackState == Player.STATE_READY && clockAtStartMs.get() == null) {
+            if (playbackState == Player.STATE_READY && clockAtStartMs.get() == C.TIME_UNSET) {
               clockAtStartMs.set(clock.elapsedRealtime());
             }
           }
@@ -2444,6 +2448,146 @@ public final class ExoPlayerTest {
         .build(context)
         .start()
         .blockUntilEnded(TIMEOUT_MS);
+  }
+
+  @Test
+  public void seekToUnpreparedWindowWithNonZeroOffsetInConcatenationStartsAtCorrectPosition()
+      throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    FakeMediaSource mediaSource = new FakeMediaSource(/* timeline= */ null, /* manifest= */ null);
+    MediaSource clippedMediaSource =
+        new ClippingMediaSource(
+            mediaSource,
+            /* startPositionUs= */ 3 * C.MICROS_PER_SECOND,
+            /* endPositionUs= */ C.TIME_END_OF_SOURCE);
+    MediaSource concatenatedMediaSource = new ConcatenatingMediaSource(clippedMediaSource);
+    AtomicLong positionWhenReady = new AtomicLong();
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("seekToUnpreparedWindowWithNonZeroOffsetInConcatenation")
+            .pause()
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            .seek(/* positionMs= */ 10)
+            .waitForTimelineChanged()
+            .executeRunnable(() -> mediaSource.setNewSourceInfo(timeline, /* newManifest= */ null))
+            .waitForTimelineChanged()
+            .waitForPlaybackState(Player.STATE_READY)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    positionWhenReady.set(player.getContentPosition());
+                  }
+                })
+            .play()
+            .build();
+    new Builder()
+        .setMediaSource(concatenatedMediaSource)
+        .setActionSchedule(actionSchedule)
+        .build(context)
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(positionWhenReady.get()).isEqualTo(10);
+  }
+
+  @Test
+  public void seekToUnpreparedWindowWithMultiplePeriodsInConcatenationStartsAtCorrectPeriod()
+      throws Exception {
+    long periodDurationMs = 5000;
+    Timeline timeline =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* periodCount =*/ 2,
+                /* id= */ new Object(),
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                /* durationUs= */ 2 * periodDurationMs * 1000));
+    FakeMediaSource mediaSource = new FakeMediaSource(/* timeline= */ null, /* manifest= */ null);
+    MediaSource concatenatedMediaSource = new ConcatenatingMediaSource(mediaSource);
+    AtomicInteger periodIndexWhenReady = new AtomicInteger();
+    AtomicLong positionWhenReady = new AtomicLong();
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("seekToUnpreparedWindowWithMultiplePeriodsInConcatenation")
+            .pause()
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            // Seek 10ms into the second period.
+            .seek(/* positionMs= */ periodDurationMs + 10)
+            .waitForTimelineChanged()
+            .executeRunnable(() -> mediaSource.setNewSourceInfo(timeline, /* newManifest= */ null))
+            .waitForTimelineChanged()
+            .waitForPlaybackState(Player.STATE_READY)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    periodIndexWhenReady.set(player.getCurrentPeriodIndex());
+                    positionWhenReady.set(player.getContentPosition());
+                  }
+                })
+            .play()
+            .build();
+    new Builder()
+        .setMediaSource(concatenatedMediaSource)
+        .setActionSchedule(actionSchedule)
+        .build(context)
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(periodIndexWhenReady.get()).isEqualTo(1);
+    assertThat(positionWhenReady.get()).isEqualTo(periodDurationMs + 10);
+  }
+
+  @Test
+  public void periodTransitionReportsCorrectBufferedPosition() throws Exception {
+    int periodCount = 3;
+    long periodDurationUs = 5 * C.MICROS_PER_SECOND;
+    long windowDurationUs = periodCount * periodDurationUs;
+    Timeline timeline =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                periodCount,
+                /* id= */ new Object(),
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                windowDurationUs));
+    AtomicReference<Player> playerReference = new AtomicReference<>();
+    AtomicLong bufferedPositionAtFirstDiscontinuityMs = new AtomicLong(C.TIME_UNSET);
+    EventListener eventListener =
+        new EventListener() {
+          @Override
+          public void onPositionDiscontinuity(@DiscontinuityReason int reason) {
+            if (reason == Player.DISCONTINUITY_REASON_PERIOD_TRANSITION) {
+              if (bufferedPositionAtFirstDiscontinuityMs.get() == C.TIME_UNSET) {
+                bufferedPositionAtFirstDiscontinuityMs.set(
+                    playerReference.get().getBufferedPosition());
+              }
+            }
+          }
+        };
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("periodTransitionReportsCorrectBufferedPosition")
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    playerReference.set(player);
+                    player.addListener(eventListener);
+                  }
+                })
+            .pause()
+            // Wait until all periods are fully buffered.
+            .waitForIsLoading(/* targetIsLoading= */ true)
+            .waitForIsLoading(/* targetIsLoading= */ false)
+            .play()
+            .build();
+    new Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build(context)
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(bufferedPositionAtFirstDiscontinuityMs.get()).isEqualTo(C.usToMs(windowDurationUs));
   }
 
   // Internal methods.

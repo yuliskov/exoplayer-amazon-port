@@ -22,7 +22,6 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
@@ -89,10 +88,14 @@ public class FakeMediaSource extends BaseMediaSource {
   }
 
   @Override
-  public synchronized void prepareSourceInternal(
-      ExoPlayer player,
-      boolean isTopLevelSource,
-      @Nullable TransferListener mediaTransferListener) {
+  @Nullable
+  public Object getTag() {
+    boolean hasTimeline = timeline != null && !timeline.isEmpty();
+    return hasTimeline ? timeline.getWindow(0, new Timeline.Window()).tag : null;
+  }
+
+  @Override
+  public synchronized void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     assertThat(preparedSource).isFalse();
     transferListener = mediaTransferListener;
     preparedSource = true;
@@ -109,7 +112,7 @@ public class FakeMediaSource extends BaseMediaSource {
   }
 
   @Override
-  public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator) {
+  public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator, long startPositionUs) {
     assertThat(preparedSource).isTrue();
     assertThat(releasedSource).isFalse();
     int periodIndex = timeline.getIndexOfPeriod(id.periodUid);

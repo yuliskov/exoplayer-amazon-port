@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.extractor.ts.TsPayloadReader.EsInfo;
 import com.google.android.exoplayer2.text.cea.Cea708InitializationData;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -39,6 +40,7 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
    * #FLAG_IGNORE_H264_STREAM}, {@link #FLAG_DETECT_ACCESS_UNITS}, {@link
    * #FLAG_IGNORE_SPLICE_INFO_STREAM} and {@link #FLAG_OVERRIDE_CAPTION_DESCRIPTORS}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef(
       flag = true,
@@ -48,16 +50,49 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         FLAG_IGNORE_H264_STREAM,
         FLAG_DETECT_ACCESS_UNITS,
         FLAG_IGNORE_SPLICE_INFO_STREAM,
-        FLAG_OVERRIDE_CAPTION_DESCRIPTORS
+        FLAG_OVERRIDE_CAPTION_DESCRIPTORS,
+        FLAG_IGNORE_HDMV_DTS_STREAM
       })
   public @interface Flags {}
 
+  /**
+   * When extracting H.264 samples, whether to treat samples consisting of non-IDR I slices as
+   * synchronization samples (key-frames).
+   */
   public static final int FLAG_ALLOW_NON_IDR_KEYFRAMES = 1;
+  /**
+   * Prevents the creation of {@link AdtsReader} and {@link LatmReader} instances. This flag should
+   * be enabled if the transport stream contains no packets for an AAC elementary stream that is
+   * declared in the PMT.
+   */
   public static final int FLAG_IGNORE_AAC_STREAM = 1 << 1;
+  /**
+   * Prevents the creation of {@link H264Reader} instances. This flag should be enabled if the
+   * transport stream contains no packets for an H.264 elementary stream that is declared in the
+   * PMT.
+   */
   public static final int FLAG_IGNORE_H264_STREAM = 1 << 2;
+  /**
+   * When extracting H.264 samples, whether to split the input stream into access units (samples)
+   * based on slice headers. This flag should be disabled if the stream contains access unit
+   * delimiters (AUDs).
+   */
   public static final int FLAG_DETECT_ACCESS_UNITS = 1 << 3;
+  /** Prevents the creation of {@link SpliceInfoSectionReader} instances. */
   public static final int FLAG_IGNORE_SPLICE_INFO_STREAM = 1 << 4;
+  /**
+   * Whether the list of {@code closedCaptionFormats} passed to {@link
+   * DefaultTsPayloadReaderFactory#DefaultTsPayloadReaderFactory(int, List)} should be used in spite
+   * of any closed captions service descriptors. If this flag is disabled, {@code
+   * closedCaptionFormats} will be ignored if the PMT contains closed captions service descriptors.
+   */
   public static final int FLAG_OVERRIDE_CAPTION_DESCRIPTORS = 1 << 5;
+  /**
+   * Prevents the creation of {@link DtsReader} instances when receiving {@link
+   * TsExtractor#TS_STREAM_TYPE_HDMV_DTS} as stream type. Enabling this flag prevents a stream type
+   * collision between HDMV DTS audio and SCTE-35 subtitles.
+   */
+  public static final int FLAG_IGNORE_HDMV_DTS_STREAM = 1 << 6;
 
   private static final int DESCRIPTOR_TAG_CAPTION_SERVICE = 0x86;
 
@@ -114,8 +149,12 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
       case TsExtractor.TS_STREAM_TYPE_AC3:
       case TsExtractor.TS_STREAM_TYPE_E_AC3:
         return new PesReader(new Ac3Reader(esInfo.language));
-      case TsExtractor.TS_STREAM_TYPE_DTS:
       case TsExtractor.TS_STREAM_TYPE_HDMV_DTS:
+        if (isSet(FLAG_IGNORE_HDMV_DTS_STREAM)) {
+          return null;
+        }
+        // Fall through.
+      case TsExtractor.TS_STREAM_TYPE_DTS:
         return new PesReader(new DtsReader(esInfo.language));
       case TsExtractor.TS_STREAM_TYPE_H262:
         return new PesReader(new H262Reader(buildUserDataReader(esInfo)));

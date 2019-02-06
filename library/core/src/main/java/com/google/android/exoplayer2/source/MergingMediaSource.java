@@ -17,11 +17,11 @@ package com.google.android.exoplayer2.source;
 
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
-import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import java.io.IOException;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -41,6 +41,7 @@ public final class MergingMediaSource extends CompositeMediaSource<Integer> {
   public static final class IllegalMergeException extends IOException {
 
     /** The reason the merge failed. One of {@link #REASON_PERIOD_COUNT_MISMATCH}. */
+    @Documented
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({REASON_PERIOD_COUNT_MISMATCH})
     public @interface Reason {}
@@ -97,11 +98,14 @@ public final class MergingMediaSource extends CompositeMediaSource<Integer> {
   }
 
   @Override
-  public void prepareSourceInternal(
-      ExoPlayer player,
-      boolean isTopLevelSource,
-      @Nullable TransferListener mediaTransferListener) {
-    super.prepareSourceInternal(player, isTopLevelSource, mediaTransferListener);
+  @Nullable
+  public Object getTag() {
+    return mediaSources.length > 0 ? mediaSources[0].getTag() : null;
+  }
+
+  @Override
+  public void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+    super.prepareSourceInternal(mediaTransferListener);
     for (int i = 0; i < mediaSources.length; i++) {
       prepareChildSource(i, mediaSources[i]);
     }
@@ -116,13 +120,13 @@ public final class MergingMediaSource extends CompositeMediaSource<Integer> {
   }
 
   @Override
-  public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator) {
+  public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator, long startPositionUs) {
     MediaPeriod[] periods = new MediaPeriod[mediaSources.length];
     int periodIndex = timelines[0].getIndexOfPeriod(id.periodUid);
     for (int i = 0; i < periods.length; i++) {
       MediaPeriodId childMediaPeriodId =
           id.copyWithPeriodUid(timelines[i].getUidOfPeriod(periodIndex));
-      periods[i] = mediaSources[i].createPeriod(childMediaPeriodId, allocator);
+      periods[i] = mediaSources[i].createPeriod(childMediaPeriodId, allocator, startPositionUs);
     }
     return new MergingMediaPeriod(compositeSequenceableLoaderFactory, periods);
   }

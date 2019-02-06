@@ -16,6 +16,13 @@
 package com.google.android.exoplayer2.demo;
 
 import android.app.Application;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
+import com.google.android.exoplayer2.RenderersFactory;
+import com.google.android.exoplayer2.database.ExoDatabaseProvider;
+import com.google.android.exoplayer2.offline.ActionFile;
+import com.google.android.exoplayer2.offline.DefaultDownloadIndex;
+import com.google.android.exoplayer2.offline.DefaultDownloaderFactory;
+import com.google.android.exoplayer2.offline.DownloadIndexUtil;
 import com.google.android.exoplayer2.offline.DownloadManager;
 import com.google.android.exoplayer2.offline.DownloaderConstructorHelper;
 import com.google.android.exoplayer2.upstream.DataSource;
@@ -28,14 +35,17 @@ import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
 import com.google.android.exoplayer2.upstream.cache.CacheDataSourceFactory;
 import com.google.android.exoplayer2.upstream.cache.NoOpCacheEvictor;
 import com.google.android.exoplayer2.upstream.cache.SimpleCache;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
+import java.io.IOException;
 
 /**
  * Placeholder application to facilitate overriding Application methods for debugging and testing.
  */
 public class DemoApplication extends Application {
 
+  private static final String TAG = "DemoApplication";
   private static final String DOWNLOAD_ACTION_FILE = "actions";
   private static final String DOWNLOAD_TRACKER_ACTION_FILE = "tracked_actions";
   private static final String DOWNLOAD_CONTENT_DIRECTORY = "downloads";
@@ -71,6 +81,17 @@ public class DemoApplication extends Application {
     return "withExtensions".equals(BuildConfig.FLAVOR);
   }
 
+  public RenderersFactory buildRenderersFactory(boolean preferExtensionRenderer) {
+    @DefaultRenderersFactory.ExtensionRendererMode
+    int extensionRendererMode =
+        useExtensionRenderers()
+            ? (preferExtensionRenderer
+                ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF;
+    return new DefaultRenderersFactory(this, extensionRendererMode);
+  }
+
   public DownloadManager getDownloadManager() {
     initDownloadManager();
     return downloadManager;
@@ -83,19 +104,28 @@ public class DemoApplication extends Application {
 
   private synchronized void initDownloadManager() {
     if (downloadManager == null) {
+      DefaultDownloadIndex downloadIndex = new DefaultDownloadIndex(new ExoDatabaseProvider(this));
+      File actionFile = new File(getDownloadDirectory(), DOWNLOAD_TRACKER_ACTION_FILE);
+      if (actionFile.exists()) {
+        try {
+          DownloadIndexUtil.upgradeActionFile(new ActionFile(actionFile), downloadIndex, null);
+        } catch (IOException e) {
+          Log.e(TAG, "Upgrading action file failed", e);
+        }
+        actionFile.delete();
+      }
       DownloaderConstructorHelper downloaderConstructorHelper =
           new DownloaderConstructorHelper(getDownloadCache(), buildHttpDataSourceFactory());
       downloadManager =
           new DownloadManager(
-              downloaderConstructorHelper,
+              this,
+              new File(getDownloadDirectory(), DOWNLOAD_ACTION_FILE),
+              new DefaultDownloaderFactory(downloaderConstructorHelper),
               MAX_SIMULTANEOUS_DOWNLOADS,
               DownloadManager.DEFAULT_MIN_RETRY_COUNT,
-              new File(getDownloadDirectory(), DOWNLOAD_ACTION_FILE));
+              DownloadManager.DEFAULT_REQUIREMENTS);
       downloadTracker =
-          new DownloadTracker(
-              /* context= */ this,
-              buildDataSourceFactory(),
-              new File(getDownloadDirectory(), DOWNLOAD_TRACKER_ACTION_FILE));
+          new DownloadTracker(/* context= */ this, buildDataSourceFactory(), downloadIndex);
       downloadManager.addListener(downloadTracker);
     }
   }

@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.extractor.ts;
 
+import static com.google.android.exoplayer2.extractor.ts.TsPayloadReader.FLAG_DATA_ALIGNMENT_INDICATOR;
+
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
@@ -32,6 +34,7 @@ import com.google.android.exoplayer2.util.ParsableBitArray;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
@@ -47,6 +50,7 @@ public final class AdtsExtractor implements Extractor {
    * Flags controlling the behavior of the extractor. Possible flag value is {@link
    * #FLAG_ENABLE_CONSTANT_BITRATE_SEEKING}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef(
       flag = true,
@@ -200,7 +204,7 @@ public final class AdtsExtractor implements Extractor {
 
     if (!startedPacket) {
       // Pass data to the reader as though it's contained within a single infinitely long packet.
-      reader.packetStarted(firstSampleTimestampUs, true);
+      reader.packetStarted(firstSampleTimestampUs, FLAG_DATA_ALIGNMENT_INDICATOR);
       startedPacket = true;
     }
     // TODO: Make it possible for reader to consume the dataSource directly, so that it becomes

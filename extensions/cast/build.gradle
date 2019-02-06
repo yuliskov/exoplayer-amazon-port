@@ -24,14 +24,16 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 14
+        minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.targetSdkVersion
         consumerProguardFiles 'proguard-rules.txt'
     }
 }
 
 dependencies {
-    api 'com.google.android.gms:play-services-cast-framework:16.0.1'
+    api 'com.google.android.gms:play-services-cast-framework:16.1.2'
+    compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
+    compileOnly 'org.checkerframework:checker-compat-qual:' + checkerframeworkVersion
     implementation project(modulePrefix + 'library-core')
     implementation project(modulePrefix + 'library-ui')
     testImplementation project(modulePrefix + 'testutils')

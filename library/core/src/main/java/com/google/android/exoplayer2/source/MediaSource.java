@@ -25,23 +25,24 @@ import com.google.android.exoplayer2.upstream.TransferListener;
 import java.io.IOException;
 
 /**
- * Defines and provides media to be played by an {@link ExoPlayer}. A MediaSource has two main
- * responsibilities:
+ * Defines and provides media to be played by an {@link com.google.android.exoplayer2.ExoPlayer}. A
+ * MediaSource has two main responsibilities:
  *
  * <ul>
  *   <li>To provide the player with a {@link Timeline} defining the structure of its media, and to
  *       provide a new timeline whenever the structure of the media changes. The MediaSource
  *       provides these timelines by calling {@link SourceInfoRefreshListener#onSourceInfoRefreshed}
- *       on the {@link SourceInfoRefreshListener}s passed to {@link #prepareSource(ExoPlayer,
- *       boolean, SourceInfoRefreshListener, TransferListener)}.
+ *       on the {@link SourceInfoRefreshListener}s passed to {@link
+ *       #prepareSource(SourceInfoRefreshListener, TransferListener)}.
  *   <li>To provide {@link MediaPeriod} instances for the periods in its timeline. MediaPeriods are
- *       obtained by calling {@link #createPeriod(MediaPeriodId, Allocator)}, and provide a way for
- *       the player to load and read the media.
+ *       obtained by calling {@link #createPeriod(MediaPeriodId, Allocator, long)}, and provide a
+ *       way for the player to load and read the media.
  * </ul>
  *
  * All methods are called on the player's internal playback thread, as described in the {@link
- * ExoPlayer} Javadoc. They should not be called directly from application code. Instances can be
- * re-used, but only for one {@link ExoPlayer} instance simultaneously.
+ * com.google.android.exoplayer2.ExoPlayer} Javadoc. They should not be called directly from
+ * application code. Instances can be re-used, but only for one {@link
+ * com.google.android.exoplayer2.ExoPlayer} instance simultaneously.
  */
 public interface MediaSource {
 
@@ -89,13 +90,10 @@ public interface MediaSource {
     public final long windowSequenceNumber;
 
     /**
-     * The end position of the media to play within the media period, in microseconds, or {@link
-     * C#TIME_END_OF_SOURCE} if the end position is the end of the media period.
-     *
-     * <p>Note that this only applies if the media period is for content (i.e., not for an ad) and
-     * is clipped to the position of the next ad group.
+     * The index of the next ad group to which the media period's content is clipped, or {@link
+     * C#INDEX_UNSET} if there is no following ad group or if this media period is an ad.
      */
-    public final long endPositionUs;
+    public final int nextAdGroupIndex;
 
     /**
      * Creates a media period identifier for a dummy period which is not part of a buffered sequence
@@ -104,7 +102,7 @@ public interface MediaSource {
      * @param periodUid The unique id of the timeline period.
      */
     public MediaPeriodId(Object periodUid) {
-      this(periodUid, C.INDEX_UNSET);
+      this(periodUid, /* windowSequenceNumber= */ C.INDEX_UNSET);
     }
 
     /**
@@ -115,7 +113,12 @@ public interface MediaSource {
      *     windows this media period is part of.
      */
     public MediaPeriodId(Object periodUid, long windowSequenceNumber) {
-      this(periodUid, C.INDEX_UNSET, C.INDEX_UNSET, windowSequenceNumber, C.TIME_END_OF_SOURCE);
+      this(
+          periodUid,
+          /* adGroupIndex= */ C.INDEX_UNSET,
+          /* adIndexInAdGroup= */ C.INDEX_UNSET,
+          windowSequenceNumber,
+          /* nextAdGroupIndex= */ C.INDEX_UNSET);
     }
 
     /**
@@ -124,11 +127,16 @@ public interface MediaSource {
      * @param periodUid The unique id of the timeline period.
      * @param windowSequenceNumber The sequence number of the window in the buffered sequence of
      *     windows this media period is part of.
-     * @param endPositionUs The end position of the media period within the timeline period, in
-     *     microseconds.
+     * @param nextAdGroupIndex The index of the next ad group to which the media period's content is
+     *     clipped.
      */
-    public MediaPeriodId(Object periodUid, long windowSequenceNumber, long endPositionUs) {
-      this(periodUid, C.INDEX_UNSET, C.INDEX_UNSET, windowSequenceNumber, endPositionUs);
+    public MediaPeriodId(Object periodUid, long windowSequenceNumber, int nextAdGroupIndex) {
+      this(
+          periodUid,
+          /* adGroupIndex= */ C.INDEX_UNSET,
+          /* adIndexInAdGroup= */ C.INDEX_UNSET,
+          windowSequenceNumber,
+          nextAdGroupIndex);
     }
 
     /**
@@ -143,7 +151,12 @@ public interface MediaSource {
      */
     public MediaPeriodId(
         Object periodUid, int adGroupIndex, int adIndexInAdGroup, long windowSequenceNumber) {
-      this(periodUid, adGroupIndex, adIndexInAdGroup, windowSequenceNumber, C.TIME_END_OF_SOURCE);
+      this(
+          periodUid,
+          adGroupIndex,
+          adIndexInAdGroup,
+          windowSequenceNumber,
+          /* nextAdGroupIndex= */ C.INDEX_UNSET);
     }
 
     private MediaPeriodId(
@@ -151,12 +164,12 @@ public interface MediaSource {
         int adGroupIndex,
         int adIndexInAdGroup,
         long windowSequenceNumber,
-        long endPositionUs) {
+        int nextAdGroupIndex) {
       this.periodUid = periodUid;
       this.adGroupIndex = adGroupIndex;
       this.adIndexInAdGroup = adIndexInAdGroup;
       this.windowSequenceNumber = windowSequenceNumber;
-      this.endPositionUs = endPositionUs;
+      this.nextAdGroupIndex = nextAdGroupIndex;
     }
 
     /** Returns a copy of this period identifier but with {@code newPeriodUid} as its period uid. */
@@ -164,7 +177,7 @@ public interface MediaSource {
       return periodUid.equals(newPeriodUid)
           ? this
           : new MediaPeriodId(
-              newPeriodUid, adGroupIndex, adIndexInAdGroup, windowSequenceNumber, endPositionUs);
+              newPeriodUid, adGroupIndex, adIndexInAdGroup, windowSequenceNumber, nextAdGroupIndex);
     }
 
     /**
@@ -188,7 +201,7 @@ public interface MediaSource {
           && adGroupIndex == periodId.adGroupIndex
           && adIndexInAdGroup == periodId.adIndexInAdGroup
           && windowSequenceNumber == periodId.windowSequenceNumber
-          && endPositionUs == periodId.endPositionUs;
+          && nextAdGroupIndex == periodId.nextAdGroupIndex;
     }
 
     @Override
@@ -198,7 +211,7 @@ public interface MediaSource {
       result = 31 * result + adGroupIndex;
       result = 31 * result + adIndexInAdGroup;
       result = 31 * result + (int) windowSequenceNumber;
-      result = 31 * result + (int) endPositionUs;
+      result = 31 * result + nextAdGroupIndex;
       return result;
     }
   }
@@ -220,11 +233,11 @@ public interface MediaSource {
    */
   void removeEventListener(MediaSourceEventListener eventListener);
 
-  /** @deprecated Will be removed in the next release. */
-  @Deprecated
-  void prepareSource(
-      ExoPlayer player, boolean isTopLevelSource, SourceInfoRefreshListener listener);
-
+  /** Returns the tag set on the media source, or null if none was set. */
+  @Nullable
+  default Object getTag() {
+    return null;
+  }
   /**
    * Starts source preparation if not yet started, and adds a listener for timeline and/or manifest
    * updates.
@@ -236,11 +249,6 @@ public interface MediaSource {
    * <p>For each call to this method, a call to {@link #releaseSource(SourceInfoRefreshListener)} is
    * needed to remove the listener and to release the source if no longer required.
    *
-   * @param player The player for which this source is being prepared.
-   * @param isTopLevelSource Whether this source has been passed directly to {@link
-   *     ExoPlayer#prepare(MediaSource)} or {@link ExoPlayer#prepare(MediaSource, boolean,
-   *     boolean)}. If {@code false}, this source is being prepared by another source (e.g. {@link
-   *     ConcatenatingMediaSource}) for composition.
    * @param listener The listener to be added.
    * @param mediaTransferListener The transfer listener which should be informed of any media data
    *     transfers. May be null if no listener is available. Note that this listener should be only
@@ -248,10 +256,7 @@ public interface MediaSource {
    *     and other data.
    */
   void prepareSource(
-      ExoPlayer player,
-      boolean isTopLevelSource,
-      SourceInfoRefreshListener listener,
-      @Nullable TransferListener mediaTransferListener);
+      SourceInfoRefreshListener listener, @Nullable TransferListener mediaTransferListener);
 
   /**
    * Throws any pending error encountered while loading or refreshing source information.
@@ -268,9 +273,10 @@ public interface MediaSource {
    *
    * @param id The identifier of the period.
    * @param allocator An {@link Allocator} from which to obtain media buffer allocations.
+   * @param startPositionUs The expected start position, in microseconds.
    * @return A new {@link MediaPeriod}.
    */
-  MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator);
+  MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator, long startPositionUs);
 
   /**
    * Releases the period.

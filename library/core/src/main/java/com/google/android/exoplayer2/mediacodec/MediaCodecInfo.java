@@ -32,7 +32,6 @@ import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 
 /** Information about a {@link MediaCodec} for a given mime type. */
-@TargetApi(16)
 @SuppressWarnings("InlinedApi")
 public final class MediaCodecInfo {
 
@@ -249,14 +248,22 @@ public final class MediaCodecInfo {
       // If we don't know any better, we assume that the profile and level are supported.
       return true;
     }
+
     // AMZN_CHANGE_BEGIN
     if (AmazonQuirks.shouldSkipProfileLevelCheck()) {
       return true;
     }
     // AMZN_CHANGE_END
+
+    int profile = codecProfileAndLevel.first;
+    int level = codecProfileAndLevel.second;
+    if (!isVideo && profile != CodecProfileLevel.AACObjectXHE) {
+      // Some devices/builds underreport audio capabilities, so assume support except for xHE-AAC
+      // which may not be widely supported. See https://github.com/google/ExoPlayer/issues/5145.
+      return true;
+    }
     for (CodecProfileLevel capabilities : getProfileLevels()) {
-      if (capabilities.profile == codecProfileAndLevel.first
-          && capabilities.level >= codecProfileAndLevel.second) {
+      if (capabilities.profile == profile && capabilities.level >= level) {
         return true;
       }
     }

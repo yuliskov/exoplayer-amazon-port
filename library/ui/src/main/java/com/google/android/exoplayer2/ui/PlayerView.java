@@ -29,7 +29,6 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Looper;
 import android.support.annotation.IntDef;
-import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
 import android.util.AttributeSet;
@@ -67,6 +66,7 @@ import com.google.android.exoplayer2.util.ErrorMessageProvider;
 import com.google.android.exoplayer2.util.RepeatModeUtil;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoListener;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.List;
@@ -186,8 +186,9 @@ import java.util.List;
  *         <li>Type: {@link AspectRatioFrameLayout}
  *       </ul>
  *   <li><b>{@code exo_shutter}</b> - A view that's made visible when video should be hidden. This
- *       view is typically an opaque view that covers the video surface view, thereby obscuring it
- *       when visible.
+ *       view is typically an opaque view that covers the video surface, thereby obscuring it when
+ *       visible. Obscuring the surface in this way also helps to prevent flicker at the start of
+ *       playback when {@code surface_type="surface_view"}.
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
@@ -240,15 +241,12 @@ import java.util.List;
  */
 public class PlayerView extends FrameLayout {
 
-  private static final int SURFACE_TYPE_NONE = 0;
-  private static final int SURFACE_TYPE_SURFACE_VIEW = 1;
-  private static final int SURFACE_TYPE_TEXTURE_VIEW = 2;
-  private static final int SURFACE_TYPE_MONO360_VIEW = 3;
-
+  // LINT.IfChange
   /**
    * Determines when the buffering view is shown. One of {@link #SHOW_BUFFERING_NEVER}, {@link
    * #SHOW_BUFFERING_WHEN_PLAYING} or {@link #SHOW_BUFFERING_ALWAYS}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({SHOW_BUFFERING_NEVER, SHOW_BUFFERING_WHEN_PLAYING, SHOW_BUFFERING_ALWAYS})
   public @interface ShowBuffering {}
@@ -264,14 +262,22 @@ public class PlayerView extends FrameLayout {
    * buffering} state.
    */
   public static final int SHOW_BUFFERING_ALWAYS = 2;
+  // LINT.ThenChange(../../../../../../res/values/attrs.xml)
 
-  private final AspectRatioFrameLayout contentFrame;
+  // LINT.IfChange
+  private static final int SURFACE_TYPE_NONE = 0;
+  private static final int SURFACE_TYPE_SURFACE_VIEW = 1;
+  private static final int SURFACE_TYPE_TEXTURE_VIEW = 2;
+  private static final int SURFACE_TYPE_MONO360_VIEW = 3;
+  // LINT.ThenChange(../../../../../../res/values/attrs.xml)
+
+  @Nullable private final AspectRatioFrameLayout contentFrame;
   private final View shutterView;
-  private final View surfaceView;
+  @Nullable private final View surfaceView;
   private final ImageView artworkView;
   private final SubtitleView subtitleView;
-  private final @Nullable View bufferingView;
-  private final @Nullable TextView errorMessageView;
+  @Nullable private final View bufferingView;
+  @Nullable private final TextView errorMessageView;
   private final PlayerControlView controller;
   private final ComponentListener componentListener;
   private final FrameLayout overlayFrameLayout;
@@ -279,11 +285,11 @@ public class PlayerView extends FrameLayout {
   private Player player;
   private boolean useController;
   private boolean useArtwork;
-  private @Nullable Drawable defaultArtwork;
+  @Nullable private Drawable defaultArtwork;
   private @ShowBuffering int showBuffering;
   private boolean keepContentOnPlayerReset;
-  private @Nullable ErrorMessageProvider<? super ExoPlaybackException> errorMessageProvider;
-  private @Nullable CharSequence customErrorMessage;
+  @Nullable private ErrorMessageProvider<? super ExoPlaybackException> errorMessageProvider;
+  @Nullable private CharSequence customErrorMessage;
   private int controllerShowTimeoutMs;
   private boolean controllerAutoShow;
   private boolean controllerHideDuringAds;
@@ -468,9 +474,7 @@ public class PlayerView extends FrameLayout {
    * @param newPlayerView The new view to attach to the player.
    */
   public static void switchTargetView(
-      @NonNull Player player,
-      @Nullable PlayerView oldPlayerView,
-      @Nullable PlayerView newPlayerView) {
+      Player player, @Nullable PlayerView oldPlayerView, @Nullable PlayerView newPlayerView) {
     if (oldPlayerView == newPlayerView) {
       return;
     }
@@ -675,8 +679,9 @@ public class PlayerView extends FrameLayout {
   /**
    * Sets whether the currently displayed video frame or media artwork is kept visible when the
    * player is reset. A player reset is defined to mean the player being re-prepared with different
-   * media, {@link Player#stop(boolean)} being called with {@code reset=true}, or the player being
-   * replaced or cleared by calling {@link #setPlayer(Player)}.
+   * media, the player transitioning to unprepared media, {@link Player#stop(boolean)} being called
+   * with {@code reset=true}, or the player being replaced or cleared by calling {@link
+   * #setPlayer(Player)}.
    *
    * <p>If enabled, the currently displayed video frame or media artwork will be kept visible until
    * the player set on the view has been successfully prepared with new media and loaded enough of
@@ -753,10 +758,6 @@ public class PlayerView extends FrameLayout {
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
     if (player != null && player.isPlayingAd()) {
-      // Focus any overlay UI now, in case it's provided by a WebView whose contents may update
-      // dynamically. This is needed to make the "Skip ad" button focused on Android TV when using
-      // IMA [Internal: b/62371030].
-      overlayFrameLayout.requestFocus();
       return super.dispatchKeyEvent(event);
     }
     boolean isDpadWhenControlHidden =
@@ -1030,6 +1031,12 @@ public class PlayerView extends FrameLayout {
     if (ev.getActionMasked() != MotionEvent.ACTION_DOWN) {
       return false;
     }
+    return performClick();
+  }
+
+  @Override
+  public boolean performClick() {
+    super.performClick();
     return toggleControllerVisibility();
   }
 
@@ -1065,6 +1072,26 @@ public class PlayerView extends FrameLayout {
   public void onPause() {
     if (surfaceView instanceof SphericalSurfaceView) {
       ((SphericalSurfaceView) surfaceView).onPause();
+    }
+  }
+
+  /**
+   * Called when there's a change in the aspect ratio of the content being displayed. The default
+   * implementation sets the aspect ratio of the content frame to that of the content, unless the
+   * content view is a {@link SphericalSurfaceView} in which case the frame's aspect ratio is
+   * cleared.
+   *
+   * @param contentAspectRatio The aspect ratio of the content.
+   * @param contentFrame The content frame, or {@code null}.
+   * @param contentView The view that holds the content being displayed, or {@code null}.
+   */
+  protected void onContentAspectRatioChanged(
+      float contentAspectRatio,
+      @Nullable AspectRatioFrameLayout contentFrame,
+      @Nullable View contentView) {
+    if (contentFrame != null) {
+      contentFrame.setAspectRatio(
+          contentView instanceof SphericalSurfaceView ? 0 : contentAspectRatio);
     }
   }
 
@@ -1181,9 +1208,8 @@ public class PlayerView extends FrameLayout {
       int drawableWidth = drawable.getIntrinsicWidth();
       int drawableHeight = drawable.getIntrinsicHeight();
       if (drawableWidth > 0 && drawableHeight > 0) {
-        if (contentFrame != null) {
-          contentFrame.setAspectRatio((float) drawableWidth / drawableHeight);
-        }
+        float artworkAspectRatio = (float) drawableWidth / drawableHeight;
+        onContentAspectRatioChanged(artworkAspectRatio, contentFrame, artworkView);
         artworkView.setImageDrawable(drawable);
         artworkView.setVisibility(VISIBLE);
         return true;
@@ -1316,9 +1342,6 @@ public class PlayerView extends FrameLayout {
     @Override
     public void onVideoSizeChanged(
         int width, int height, int unappliedRotationDegrees, float pixelWidthHeightRatio) {
-      if (contentFrame == null) {
-        return;
-      }
       float videoAspectRatio =
           (height == 0 || width == 0) ? 1 : (width * pixelWidthHeightRatio) / height;
 
@@ -1339,11 +1362,9 @@ public class PlayerView extends FrameLayout {
           surfaceView.addOnLayoutChangeListener(this);
         }
         applyTextureViewRotation((TextureView) surfaceView, textureViewRotation);
-      } else if (surfaceView instanceof SphericalSurfaceView) {
-        videoAspectRatio = 0;
       }
 
-      contentFrame.setAspectRatio(videoAspectRatio);
+      onContentAspectRatioChanged(videoAspectRatio, contentFrame, surfaceView);
     }
 
     @Override

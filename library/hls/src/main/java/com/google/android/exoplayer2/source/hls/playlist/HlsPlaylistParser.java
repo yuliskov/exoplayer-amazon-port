@@ -101,6 +101,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       Pattern.compile("AVERAGE-BANDWIDTH=(\\d+)\\b");
   private static final Pattern REGEX_AUDIO = Pattern.compile("AUDIO=\"(.+?)\"");
   private static final Pattern REGEX_BANDWIDTH = Pattern.compile("[^-]BANDWIDTH=(\\d+)\\b");
+  private static final Pattern REGEX_CHANNELS = Pattern.compile("CHANNELS=\"(.+?)\"");
   private static final Pattern REGEX_CODECS = Pattern.compile("CODECS=\"(.+?)\"");
   private static final Pattern REGEX_RESOLUTION = Pattern.compile("RESOLUTION=(\\d+x\\d+)");
   private static final Pattern REGEX_FRAME_RATE = Pattern.compile("FRAME-RATE=([\\d\\.]+)\\b");
@@ -341,25 +342,27 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       String name = parseStringAttr(line, REGEX_NAME, variableDefinitions);
       String language = parseOptionalStringAttr(line, REGEX_LANGUAGE, variableDefinitions);
       String groupId = parseOptionalStringAttr(line, REGEX_GROUP_ID, variableDefinitions);
+      String id = groupId + ":" + name;
       Format format;
       switch (parseStringAttr(line, REGEX_TYPE, variableDefinitions)) {
         case TYPE_AUDIO:
           String codecs = audioGroupIdToCodecs.get(groupId);
+          int channelCount = parseChannelsAttribute(line, variableDefinitions);
           String sampleMimeType = codecs != null ? MimeTypes.getMediaMimeType(codecs) : null;
           format =
               Format.createAudioContainerFormat(
-                  /* id= */ name,
+                  /* id= */ id,
                   /* label= */ name,
                   /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
                   sampleMimeType,
                   codecs,
                   /* bitrate= */ Format.NO_VALUE,
-                  /* channelCount= */ Format.NO_VALUE,
+                  channelCount,
                   /* sampleRate= */ Format.NO_VALUE,
                   /* initializationData= */ null,
                   selectionFlags,
                   language);
-          if (uri == null) {
+          if (isMediaTagMuxed(variants, uri)) {
             muxedAudioFormat = format;
           } else {
             audios.add(new HlsMasterPlaylist.HlsUrl(uri, format));
@@ -368,7 +371,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         case TYPE_SUBTITLES:
           format =
               Format.createTextContainerFormat(
-                  /* id= */ name,
+                  /* id= */ id,
                   /* label= */ name,
                   /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
                   /* sampleMimeType= */ MimeTypes.TEXT_VTT,
@@ -394,7 +397,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
           }
           muxedCaptionFormats.add(
               Format.createTextContainerFormat(
-                  /* id= */ name,
+                  /* id= */ id,
                   /* label= */ name,
                   /* containerMimeType= */ null,
                   /* sampleMimeType= */ mimeType,
@@ -423,21 +426,6 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         muxedCaptionFormats,
         hasIndependentSegmentsTag,
         variableDefinitions);
-  }
-
-  @C.SelectionFlags
-  private static int parseSelectionFlags(String line) {
-    int flags = 0;
-    if (parseOptionalBooleanAttribute(line, REGEX_DEFAULT, false)) {
-      flags |= C.SELECTION_FLAG_DEFAULT;
-    }
-    if (parseOptionalBooleanAttribute(line, REGEX_FORCED, false)) {
-      flags |= C.SELECTION_FLAG_FORCED;
-    }
-    if (parseOptionalBooleanAttribute(line, REGEX_AUTOSELECT, false)) {
-      flags |= C.SELECTION_FLAG_AUTOSELECT;
-    }
-    return flags;
   }
 
   private static HlsMediaPlaylist parseMediaPlaylist(
@@ -660,6 +648,28 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         segments);
   }
 
+  @C.SelectionFlags
+  private static int parseSelectionFlags(String line) {
+    int flags = 0;
+    if (parseOptionalBooleanAttribute(line, REGEX_DEFAULT, false)) {
+      flags |= C.SELECTION_FLAG_DEFAULT;
+    }
+    if (parseOptionalBooleanAttribute(line, REGEX_FORCED, false)) {
+      flags |= C.SELECTION_FLAG_FORCED;
+    }
+    if (parseOptionalBooleanAttribute(line, REGEX_AUTOSELECT, false)) {
+      flags |= C.SELECTION_FLAG_AUTOSELECT;
+    }
+    return flags;
+  }
+
+  private static int parseChannelsAttribute(String line, Map<String, String> variableDefinitions) {
+    String channelsString = parseOptionalStringAttr(line, REGEX_CHANNELS, variableDefinitions);
+    return channelsString != null
+        ? Integer.parseInt(Util.splitAtFirst(channelsString, "/")[0])
+        : Format.NO_VALUE;
+  }
+
   private static @Nullable SchemeData parsePlayReadySchemeData(
       String line, Map<String, String> variableDefinitions) throws ParserException {
     String keyFormatVersions =
@@ -763,6 +773,20 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
 
   private static Pattern compileBooleanAttrPattern(String attribute) {
     return Pattern.compile(attribute + "=(" + BOOLEAN_FALSE + "|" + BOOLEAN_TRUE + ")");
+  }
+
+  private static boolean isMediaTagMuxed(
+      List<HlsMasterPlaylist.HlsUrl> variants, String mediaTagUri) {
+    if (mediaTagUri == null) {
+      return true;
+    }
+    // The URI attribute is defined, but it may match the uri of a variant.
+    for (int i = 0; i < variants.size(); i++) {
+      if (mediaTagUri.equals(variants.get(i).url)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static class LineIterator {

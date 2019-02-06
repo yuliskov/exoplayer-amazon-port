@@ -18,7 +18,6 @@ package com.google.android.exoplayer2.drm;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.media.DeniedByServerException;
-import android.media.MediaCrypto;
 import android.media.MediaCryptoException;
 import android.media.MediaDrm;
 import android.media.MediaDrmException;
@@ -70,9 +69,7 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
     Assertions.checkNotNull(uuid);
     Assertions.checkArgument(!C.COMMON_PSSH_UUID.equals(uuid), "Use C.CLEARKEY_UUID instead");
     this.uuid = uuid;
-    // ClearKey had to be accessed using the Common PSSH UUID prior to API level 27.
-    this.mediaDrm =
-        new MediaDrm(Util.SDK_INT < 27 && C.CLEARKEY_UUID.equals(uuid) ? C.COMMON_PSSH_UUID : uuid);
+    this.mediaDrm = new MediaDrm(adjustUuid(uuid));
     if (C.WIDEVINE_UUID.equals(uuid) && needsForceWidevineL3Workaround()) {
       forceWidevineL3(mediaDrm);
     }
@@ -131,7 +128,7 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
     String mimeType = null;
     if (schemeDatas != null) {
       schemeData = getSchemeData(uuid, schemeDatas);
-      initData = adjustRequestInitData(uuid, schemeData.data);
+      initData = adjustRequestInitData(uuid, Assertions.checkNotNull(schemeData.data));
       mimeType = adjustRequestMimeType(uuid, schemeData.mimeType);
     }
     MediaDrm.KeyRequest request =
@@ -152,7 +149,6 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   @Override
   public byte[] provideKeyResponse(byte[] scope, byte[] response)
       throws NotProvisionedException, DeniedByServerException {
-
     if (C.CLEARKEY_UUID.equals(uuid)) {
       response = ClearKeyUtil.adjustResponseData(response);
     }
@@ -212,8 +208,8 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
     // indicate that it required secure video decoders [Internal ref: b/11428937].
     boolean forceAllowInsecureDecoderComponents = Util.SDK_INT < 21
         && C.WIDEVINE_UUID.equals(uuid) && "L3".equals(getPropertyString("securityLevel"));
-    return new FrameworkMediaCrypto(new MediaCrypto(uuid, initData),
-        forceAllowInsecureDecoderComponents);
+    return new FrameworkMediaCrypto(
+        adjustUuid(uuid), initData, forceAllowInsecureDecoderComponents);
   }
 
   private static SchemeData getSchemeData(UUID uuid, List<SchemeData> schemeDatas) {
@@ -229,11 +225,12 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
       boolean canConcatenateData = true;
       for (int i = 0; i < schemeDatas.size(); i++) {
         SchemeData schemeData = schemeDatas.get(i);
+        byte[] schemeDataData = Util.castNonNull(schemeData.data);
         if (schemeData.requiresSecureDecryption == firstSchemeData.requiresSecureDecryption
             && Util.areEqual(schemeData.mimeType, firstSchemeData.mimeType)
             && Util.areEqual(schemeData.licenseServerUrl, firstSchemeData.licenseServerUrl)
-            && PsshAtomUtil.isPsshAtom(schemeData.data)) {
-          concatenatedDataLength += schemeData.data.length;
+            && PsshAtomUtil.isPsshAtom(schemeDataData)) {
+          concatenatedDataLength += schemeDataData.length;
         } else {
           canConcatenateData = false;
           break;
@@ -244,9 +241,10 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
         int concatenatedDataPosition = 0;
         for (int i = 0; i < schemeDatas.size(); i++) {
           SchemeData schemeData = schemeDatas.get(i);
-          int schemeDataLength = schemeData.data.length;
+          byte[] schemeDataData = Util.castNonNull(schemeData.data);
+          int schemeDataLength = schemeDataData.length;
           System.arraycopy(
-              schemeData.data, 0, concatenatedData, concatenatedDataPosition, schemeDataLength);
+              schemeDataData, 0, concatenatedData, concatenatedDataPosition, schemeDataLength);
           concatenatedDataPosition += schemeDataLength;
         }
         return firstSchemeData.copyWithData(concatenatedData);
@@ -257,7 +255,7 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
     // the first V0 box.
     for (int i = 0; i < schemeDatas.size(); i++) {
       SchemeData schemeData = schemeDatas.get(i);
-      int version = PsshAtomUtil.parseVersion(schemeData.data);
+      int version = PsshAtomUtil.parseVersion(Util.castNonNull(schemeData.data));
       if (Util.SDK_INT < 23 && version == 0) {
         return schemeData;
       } else if (Util.SDK_INT >= 23 && version == 1) {
@@ -267,6 +265,11 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
 
     // If all else fails, use the first scheme data.
     return schemeDatas.get(0);
+  }
+
+  private static UUID adjustUuid(UUID uuid) {
+    // ClearKey had to be accessed using the Common PSSH UUID prior to API level 27.
+    return Util.SDK_INT < 27 && C.CLEARKEY_UUID.equals(uuid) ? C.COMMON_PSSH_UUID : uuid;
   }
 
   private static byte[] adjustRequestInitData(UUID uuid, byte[] initData) {

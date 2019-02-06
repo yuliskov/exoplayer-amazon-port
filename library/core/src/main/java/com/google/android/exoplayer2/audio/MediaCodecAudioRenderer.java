@@ -16,14 +16,13 @@
 package com.google.android.exoplayer2.audio;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.media.MediaCodec;
 import android.media.MediaCrypto;
 import android.media.MediaFormat;
 import android.media.audiofx.Virtualizer;
 import android.os.Handler;
+import android.support.annotation.CallSuper;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -68,7 +67,6 @@ import java.util.List;
  *       underlying audio track.
  * </ul>
  */
-@TargetApi(16)
 public class MediaCodecAudioRenderer extends MediaCodecRenderer implements MediaClock {
 
   /**
@@ -88,6 +86,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   private int codecMaxInputSize;
   private boolean passthroughEnabled;
   private boolean codecNeedsDiscardChannelsWorkaround;
+  private boolean codecNeedsEosBufferTimestampWorkaround;
   private android.media.MediaFormat passthroughMediaFormat;
   private @C.Encoding int pcmEncoding;
   private int channelCount;
@@ -274,12 +273,14 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     }
     int tunnelingSupport = Util.SDK_INT >= 21 ? TUNNELING_SUPPORTED : TUNNELING_NOT_SUPPORTED;
     boolean supportsFormatDrm = supportsFormatDrm(drmSessionManager, format.drmInitData);
-    if (supportsFormatDrm && allowPassthrough(mimeType)
+    if (supportsFormatDrm
+        && allowPassthrough(format.channelCount, mimeType)
         && mediaCodecSelector.getPassthroughDecoderInfo() != null) {
       return ADAPTIVE_NOT_SEAMLESS | tunnelingSupport | FORMAT_HANDLED;
     }
-    if ((MimeTypes.AUDIO_RAW.equals(mimeType) && !audioSink.isEncodingSupported(format.pcmEncoding))
-        || !audioSink.isEncodingSupported(C.ENCODING_PCM_16BIT)) {
+    if ((MimeTypes.AUDIO_RAW.equals(mimeType)
+            && !audioSink.supportsOutput(format.channelCount, format.pcmEncoding))
+        || !audioSink.supportsOutput(format.channelCount, C.ENCODING_PCM_16BIT)) {
       // Assume the decoder outputs 16-bit PCM, unless the input is raw.
       return FORMAT_UNSUPPORTED_SUBTYPE;
     }
@@ -318,7 +319,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   protected List<MediaCodecInfo> getDecoderInfos(
       MediaCodecSelector mediaCodecSelector, Format format, boolean requiresSecureDecoder)
       throws DecoderQueryException {
-    if (allowPassthrough(format.sampleMimeType)
+    if (allowPassthrough(format.channelCount, format.sampleMimeType)
             && AmazonQuirks.useDefaultPassthroughDecoder()) { // AMZN_CHANGE_ONELINE
       MediaCodecInfo passthroughDecoderInfo = mediaCodecSelector.getPassthroughDecoderInfo();
       if (passthroughDecoderInfo != null) {
@@ -333,12 +334,13 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
    * This implementation returns true if the {@link AudioSink} indicates that encoded audio output
    * is supported.
    *
+   * @param channelCount The number of channels in the input media, or {@link Format#NO_VALUE} if
+   *     not known.
    * @param mimeType The type of input media.
    * @return Whether passthrough playback is supported.
    */
-  protected boolean allowPassthrough(String mimeType) {
-    @C.Encoding int encoding = MimeTypes.getEncoding(mimeType);
-    return encoding != C.ENCODING_INVALID && audioSink.isEncodingSupported(encoding);
+  protected boolean allowPassthrough(int channelCount, String mimeType) {
+    return audioSink.supportsOutput(channelCount, MimeTypes.getEncoding(mimeType));
   }
 
   @Override
@@ -351,8 +353,9 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     codecMaxInputSize = getCodecMaxInputSize(codecInfo, format, getStreamFormats());
     log.setTAG (codecInfo.name + "-" + TAG); // AMZN_CHANGE_ONELINE
     codecNeedsDiscardChannelsWorkaround = codecNeedsDiscardChannelsWorkaround(codecInfo.name);
+    codecNeedsEosBufferTimestampWorkaround = codecNeedsEosBufferTimestampWorkaround(codecInfo.name);
     passthroughEnabled = codecInfo.passthrough;
-    String codecMimeType = codecInfo.mimeType == null ? MimeTypes.AUDIO_RAW : codecInfo.mimeType;
+    String codecMimeType = passthroughEnabled ? MimeTypes.AUDIO_RAW : codecInfo.mimeType;
     MediaFormat mediaFormat =
         getMediaFormat(format, codecMimeType, codecMaxInputSize, codecOperatingRate);
     codec.configure(mediaFormat, /* surface= */ null, crypto, /* flags= */ 0);
@@ -368,14 +371,22 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   @Override
   protected @KeepCodecResult int canKeepCodec(
       MediaCodec codec, MediaCodecInfo codecInfo, Format oldFormat, Format newFormat) {
-    if (getCodecMaxInputSize(codecInfo, newFormat) <= codecMaxInputSize
-        && codecInfo.isSeamlessAdaptationSupported(
-            oldFormat, newFormat, /* isNewFormatComplete= */ true)
-        && oldFormat.encoderDelay == 0
-        && oldFormat.encoderPadding == 0
-        && newFormat.encoderDelay == 0
-        && newFormat.encoderPadding == 0) {
+    // TODO: We currently rely on recreating the codec when encoder delay or padding is non-zero.
+    // Re-creating the codec is necessary to guarantee that onOutputFormatChanged is called, which
+    // is where encoder delay and padding are propagated to the sink. We should find a better way to
+    // propagate these values, and then allow the codec to be re-used in cases where this would
+    // otherwise be possible.
+    if (getCodecMaxInputSize(codecInfo, newFormat) > codecMaxInputSize
+        || oldFormat.encoderDelay != 0
+        || oldFormat.encoderPadding != 0
+        || newFormat.encoderDelay != 0
+        || newFormat.encoderPadding != 0) {
+      return KEEP_CODEC_RESULT_NO;
+    } else if (codecInfo.isSeamlessAdaptationSupported(
+        oldFormat, newFormat, /* isNewFormatComplete= */ true)) {
       return KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION;
+    } else if (areCodecConfigurationCompatible(oldFormat, newFormat)) {
+      return KEEP_CODEC_RESULT_YES_WITH_FLUSH;
     } else {
       return KEEP_CODEC_RESULT_NO;
     }
@@ -387,7 +398,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   }
 
   @Override
-  protected float getCodecOperatingRate(
+  protected float getCodecOperatingRateV23(
       float operatingRate, Format format, Format[] streamFormats) {
     // Use the highest known stream sample-rate up front, to avoid having to reconfigure the codec
     // should an adaptive switch to that stream occur.
@@ -520,7 +531,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   @Override
   protected void onPositionReset(long positionUs, boolean joining) throws ExoPlaybackException {
     super.onPositionReset(positionUs, joining);
-    audioSink.reset();
+    audioSink.flush();
     currentPositionUs = positionUs;
     allowFirstBufferPositionDiscontinuity = true;
     allowPositionDiscontinuity = true;
@@ -546,14 +557,22 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     try {
       lastInputTimeUs = C.TIME_UNSET;
       pendingStreamChangeCount = 0;
-      audioSink.release();
+      audioSink.flush();
     } finally {
       try {
         super.onDisabled();
       } finally {
-        decoderCounters.ensureUpdated();
         eventDispatcher.disabled(decoderCounters);
       }
+    }
+  }
+
+  @Override
+  protected void onReset() {
+    try {
+      super.onReset();
+    } finally {
+      audioSink.reset();
     }
   }
 
@@ -599,9 +618,9 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     lastInputTimeUs = Math.max(buffer.timeUs, lastInputTimeUs);
   }
 
+  @CallSuper
   @Override
   protected void onProcessedOutputBuffer(long presentationTimeUs) {
-    super.onProcessedOutputBuffer(presentationTimeUs);
     while (pendingStreamChangeCount != 0 && presentationTimeUs >= pendingStreamChangeTimesUs[0]) {
       audioSink.handleDiscontinuity();
       pendingStreamChangeCount--;
@@ -636,6 +655,13 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
               ", bufferPresentationTimeUs = " + bufferPresentationTimeUs);
     }
     // AMZN_CHANGE_END
+    
+    if (codecNeedsEosBufferTimestampWorkaround
+        && bufferPresentationTimeUs == 0
+        && (bufferFlags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+        && lastInputTimeUs != C.TIME_UNSET) {
+      bufferPresentationTimeUs = lastInputTimeUs;
+    }
 
     if (passthroughEnabled && (bufferFlags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
       // Discard output buffers from the passthrough (raw) decoder containing codec specific data.
@@ -726,25 +752,34 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
    *     be determined.
    */
   private int getCodecMaxInputSize(MediaCodecInfo codecInfo, Format format) {
-    if (Util.SDK_INT < 24 && "OMX.google.raw.decoder".equals(codecInfo.name)) {
-      // OMX.google.raw.decoder didn't resize its output buffers correctly prior to N, so there's no
-      // point requesting a non-default input size. Doing so may cause a native crash, where-as not
-      // doing so will cause a more controlled failure when attempting to fill an input buffer. See:
-      // https://github.com/google/ExoPlayer/issues/4057.
-      boolean needsRawDecoderWorkaround = true;
-      if (Util.SDK_INT == 23) {
-        PackageManager packageManager = context.getPackageManager();
-        if (packageManager != null
-            && packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-          // The workaround is not required for AndroidTV devices running M.
-          needsRawDecoderWorkaround = false;
-        }
-      }
-      if (needsRawDecoderWorkaround) {
+    if ("OMX.google.raw.decoder".equals(codecInfo.name)) {
+      // OMX.google.raw.decoder didn't resize its output buffers correctly prior to N, except on
+      // Android TV running M, so there's no point requesting a non-default input size. Doing so may
+      // cause a native crash, whereas not doing so will cause a more controlled failure when
+      // attempting to fill an input buffer. See: https://github.com/google/ExoPlayer/issues/4057.
+      if (Util.SDK_INT < 24 && !(Util.SDK_INT == 23 && Util.isTv(context))) {
         return Format.NO_VALUE;
       }
     }
     return format.maxInputSize;
+  }
+
+  /**
+   * Returns whether two {@link Format}s will cause the same codec to be configured in an identical
+   * way, excluding {@link MediaFormat#KEY_MAX_INPUT_SIZE} and configuration that does not come from
+   * the {@link Format}.
+   *
+   * @param oldFormat The first format.
+   * @param newFormat The second format.
+   * @return Whether the two formats will cause a codec to be configured in an identical way,
+   *     excluding {@link MediaFormat#KEY_MAX_INPUT_SIZE} and configuration that does not come from
+   *     the {@link Format}.
+   */
+  protected boolean areCodecConfigurationCompatible(Format oldFormat, Format newFormat) {
+    return Util.areEqual(oldFormat.sampleMimeType, newFormat.sampleMimeType)
+        && oldFormat.channelCount == newFormat.channelCount
+        && oldFormat.sampleRate == newFormat.sampleRate
+        && oldFormat.initializationDataEquals(newFormat);
   }
 
   /**
@@ -802,6 +837,24 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
         && "samsung".equals(Util.MANUFACTURER)
         && (Util.DEVICE.startsWith("zeroflte") || Util.DEVICE.startsWith("herolte")
         || Util.DEVICE.startsWith("heroqlte"));
+  }
+
+  /**
+   * Returns whether the decoder may output a non-empty buffer with timestamp 0 as the end of stream
+   * buffer.
+   *
+   * <p>See <a href="https://github.com/google/ExoPlayer/issues/5045">GitHub issue #5045</a>.
+   */
+  private static boolean codecNeedsEosBufferTimestampWorkaround(String codecName) {
+    return Util.SDK_INT < 21
+        && "OMX.SEC.mp3.dec".equals(codecName)
+        && "samsung".equals(Util.MANUFACTURER)
+        && (Util.DEVICE.startsWith("baffin")
+            || Util.DEVICE.startsWith("grand")
+            || Util.DEVICE.startsWith("fortuna")
+            || Util.DEVICE.startsWith("gprimelte")
+            || Util.DEVICE.startsWith("j2y18lte")
+            || Util.DEVICE.startsWith("ms01"));
   }
 
   private final class AudioSinkListener implements AudioSink.Listener {

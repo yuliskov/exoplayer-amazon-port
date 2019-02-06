@@ -93,6 +93,7 @@ public final class MimeTypes {
   public static final String APPLICATION_EMSG = BASE_TYPE_APPLICATION + "/x-emsg";
   public static final String APPLICATION_DVBSUBS = BASE_TYPE_APPLICATION + "/dvbsubs";
   public static final String APPLICATION_EXIF = BASE_TYPE_APPLICATION + "/x-exif";
+  public static final String APPLICATION_ICY = BASE_TYPE_APPLICATION + "/x-icy";
 
   private static final ArrayList<CustomMimeType> customMimeTypes = new ArrayList<>();
 
@@ -208,7 +209,7 @@ public final class MimeTypes {
     if (codec == null) {
       return null;
     }
-    codec = codec.trim();
+    codec = Util.toLowerInvariant(codec.trim());
     if (codec.startsWith("avc1") || codec.startsWith("avc3")) {
       return MimeTypes.VIDEO_H264;
     } else if (codec.startsWith("hev1") || codec.startsWith("hvc1")) {
@@ -246,6 +247,8 @@ public final class MimeTypes {
       return MimeTypes.AUDIO_OPUS;
     } else if (codec.startsWith("vorbis")) {
       return MimeTypes.AUDIO_VORBIS;
+    } else if (codec.startsWith("flac")) {
+      return MimeTypes.AUDIO_FLAC;
     } else {
       return getCustomMimeTypeForCodec(codec);
     }
